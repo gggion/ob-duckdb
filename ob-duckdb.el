@@ -337,57 +337,14 @@ Processes raw DuckDB output to remove:
 - Progress bars
 - Prompt characters
 - Process status messages
-- Excess whitespace and blank lines
-
-This produces a clean, usable result that can be presented in Org mode."
-  (with-temp-buffer
-    (insert output)
-
-    ;; Remove version info and connection info at the beginning
-    (goto-char (point-min))
-    (when (re-search-forward "^Use \"\\.open FILENAME\".*\n" nil t)
-      (delete-region (point-min) (point)))
-
-    ;; Remove DuckDB progress bars
-    (goto-char (point-min))
-    (while (re-search-forward "^ *[0-9]+% ▕[█ ]+▏.*$" nil t)
-      (delete-region (line-beginning-position) (1+ (line-end-position))))
-
-    ;; Remove marker line from shell command
-    (goto-char (point-min))
-    (when (re-search-forward "^marker$" nil t)
-      (delete-region (match-beginning 0) (1+ (match-end 0))))
-
-    ;; Remove .show output if present
-    (goto-char (point-min))
-    (when (re-search-forward "^\\s-*echo:.*\n\\s-*headers:.*\n\\s-*mode:.*\n"
-                             nil t)
-      (let ((start (match-beginning 0)))
-        (when (re-search-forward "^\\s-*width:.*\n\\s-*filename:.*\n" nil t)
-          (delete-region start (match-end 0)))))
-
-    ;; Remove all D prompts and any · characters that are part of the prompt
-    (goto-char (point-min))
-    (while (re-search-forward "^D[ ·]+" nil t)
-      (replace-match ""))
-
-    ;; Remove "Process duckdb finished" at the end
-    (goto-char (point-min))
-    (when (re-search-forward "^Process duckdb finished$" nil t)
-      (delete-region (match-beginning 0) (point-max)))
-
-    ;; Trim excess blank lines at the beginning
-    (goto-char (point-min))
-    (while (and (not (eobp)) (looking-at "^\\s-*$"))
-      (delete-region (line-beginning-position) (1+ (line-end-position))))
-
-    ;; Trim excess blank lines at the end
-    (goto-char (point-max))
-    (skip-chars-backward " \t\n\r")
-    (when (< (point) (point-max))
-      (delete-region (1+ (point)) (point-max)))
-
-    (buffer-string)))
+- Excess whitespace and blank lines"
+  (let ((cleaned-output
+         (replace-regexp-in-string
+          "\\(?:^D[ ·]+\\|^Process duckdb finished$\\|^Use \"\\.open FILENAME\".*\n\\|^ *[0-9]+% ▕[█ ]+▏.*$\\|^marker$\\|^\\s-*echo:.*\n\\s-*headers:.*\n\\s-*mode:.*\n\\)"
+          ""
+          output)))
+    ;; Trim excess blank lines at the beginning and end
+    (string-trim cleaned-output)))
 
 ;;; Execution Functions
 
