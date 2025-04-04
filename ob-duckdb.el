@@ -193,12 +193,13 @@ Handles various data types:
 Each variable is converted to its DuckDB equivalent using
 `org-babel-duckdb-var-to-duckdb'. This is used when variables
 need to be explicitly assigned in the DuckDB session."
-  (mapcar
-   (lambda (pair)
-     (format "%s=%s"
-             (car pair)
-             (org-babel-duckdb-var-to-duckdb (cdr pair))))
-   (org-babel--get-vars params)))
+  (let ((vars (org-babel--get-vars params)))
+    (mapcar
+     (lambda (pair)
+       (format "%s=%s"
+               (car pair)
+               (org-babel-duckdb-var-to-duckdb (cdr pair))))
+     vars)))
 
 (defun org-babel-expand-body:duckdb (body params)
   "Expand BODY with variables from PARAMS.
