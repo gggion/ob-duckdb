@@ -128,25 +128,25 @@ Returns a buffer object dedicated to the named session."
           (puthash session-name new-buffer org-babel-duckdb-sessions)
           new-buffer))))
 
-(defun org-babel-duckdb-with-earmuffs (session)
-  "Return SESSION name with *asterisks* around it.
-This is traditional for process buffers in Emacs.
-If SESSION already has earmuffs, return it unchanged."
-  (let ((name (if (stringp session) session (format "%s" session))))
-    (if (and (string= "*" (substring name 0 1))
-	     (string= "*" (substring name (- (length name) 1))))
-	name
-      (format "*%s*" name))))
+;; (defun org-babel-duckdb-with-earmuffs (session)
+;;   "Return SESSION name with *asterisks* around it.
+;; This is traditional for process buffers in Emacs.
+;; If SESSION already has earmuffs, return it unchanged."
+;;   (let ((name (if (stringp session) session (format "%s" session))))
+;;     (if (and (string= "*" (substring name 0 1))
+;; 	     (string= "*" (substring name (- (length name) 1))))
+;; 	name
+;;       (format "*%s*" name))))
 
-(defun org-babel-duckdb-without-earmuffs (session)
-  "Return SESSION name without surrounding *asterisks*.
-This is used when we need the clean session name.
-If SESSION doesn't have earmuffs, return it unchanged."
-  (let ((name (if (stringp session) session (format "%s" session))))
-    (if (and (string= "*" (substring name 0 1))
-	     (string= "*" (substring name (- (length name) 1))))
-	(substring name 1 (- (length name) 1))
-      name)))
+;; (defun org-babel-duckdb-without-earmuffs (session)
+;;   "Return SESSION name without surrounding *asterisks*.
+;; This is used when we need the clean session name.
+;; If SESSION doesn't have earmuffs, return it unchanged."
+;;   (let ((name (if (stringp session) session (format "%s" session))))
+;;     (if (and (string= "*" (substring name 0 1))
+;; 	     (string= "*" (substring name (- (length name) 1))))
+;; 	(substring name 1 (- (length name) 1))
+;;       name)))
 
 ;;; Variable Handling
 
