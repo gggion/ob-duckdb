@@ -287,38 +287,39 @@ Returns a string of newline-separated dot commands to configure DuckDB."
         (nullvalue (cdr (assq :nullvalue params)))
         (separator (cdr (assq :separator params)))
         (echo (cdr (assq :echo params)))
-        (bail (cdr (assq :bail params)))
-        (dot-commands '()))
+        (bail (cdr (assq :bail params))))
 
-    ;; Build dot commands list based on parameters
-    (when format
-      (push (format ".mode %s" format) dot-commands))
+    ;; Use with-temp-buffer for string building which benchmarks showed was fastest
+    (with-temp-buffer
+      ;; Add each command if its parameter is specified
+      (when format
+        (insert (format ".mode %s\n" format)))
 
-    (when timer
-      (push (format ".timer %s" (if (string= timer "off") "off" "on"))
-            dot-commands))
+      (when timer
+        (insert (format ".timer %s\n"
+                        (if (string= timer "off") "off" "on"))))
 
-    (when headers
-      (push (format ".headers %s" (if (string= headers "off") "off" "on"))
-            dot-commands))
+      (when headers
+        (insert (format ".headers %s\n"
+                        (if (string= headers "off") "off" "on"))))
 
-    (when nullvalue
-      (push (format ".nullvalue %s" nullvalue) dot-commands))
+      (when nullvalue
+        (insert (format ".nullvalue %s\n" nullvalue)))
 
-    (when separator
-      (push (format ".separator %s" separator) dot-commands))
+      (when separator
+        (insert (format ".separator %s\n" separator)))
 
-    (when echo
-      (push (format ".echo %s" (if (string= echo "off") "off" "on"))
-            dot-commands))
+      (when echo
+        (insert (format ".echo %s\n"
+                        (if (string= echo "off") "off" "on"))))
 
-    (when bail
-      (push (format ".bail %s" (if (string= bail "off") "off" "on"))
-            dot-commands))
+      (when bail
+        (insert (format ".bail %s\n"
+                        (if (string= bail "off") "off" "on"))))
 
-    ;; Return all dot commands as a string
-    (when dot-commands
-      (mapconcat 'identity (nreverse dot-commands) "\n"))))
+      ;; Return the buffer contents if we added any commands
+      (when (> (buffer-size) 0)
+        (buffer-string)))))
 
 (defun org-babel-duckdb-write-temp-sql (body)
   "Write SQL BODY to a temporary file and return the filename.
