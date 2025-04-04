@@ -223,48 +223,53 @@ from other Org elements in DuckDB queries."
           (let ((name (car pair))
                 (value (cdr pair)))
 
-            ;; Handle table cell access like vars[file] - most specific first
+            ;; Handle the three substitution patterns in a single pass through the buffer
             (goto-char (point-min))
-            (while (re-search-forward (format "\\b%s\\[\\([^]]+\\)\\]"
-                                          (regexp-quote (symbol-name name)))
-                                  nil t)
-              (let* ((key (match-string 1))
-                     (cell-value nil))
-                ;; Find the value in the table
-                (when (and (listp value) (> (length value) 0))
-                  (dolist (row value)
-                    (when (and (listp row) (>= (length row) 2)
-                               (equal (car row) key))
-                      (setq cell-value (cadr row)))))
-                (when cell-value
-                  (replace-match (if (stringp cell-value)
-                                     cell-value
-                                   (format "%S" cell-value)) t t))))
+            (while (re-search-forward
+                    (format "\\(?:\\$%s\\|\\b%s\\[\\([^]]+\\)\\]\\|\\b%s\\b\\)"
+                            (regexp-quote (symbol-name name))
+                            (regexp-quote (symbol-name name))
+                            (regexp-quote (symbol-name name)))
+                    nil t)
+              ;; Check which pattern matched
+              (cond
+               ;; varname[key] pattern
+               ((match-beginning 1)
+                (let* ((key (match-string 1))
+                       (cell-value nil))
+                  ;; Find the value in the table
+                  (when (and (listp value) (> (length value) 0))
+                    (dolist (row value)
+                      (when (and (listp row) (>= (length row) 2)
+                                 (equal (car row) key))
+                        (setq cell-value (cadr row)))))
+                  ;; Replace with the cell value
+                  (when cell-value
+                    (replace-match (if (stringp cell-value)
+                                       cell-value
+                                     (format "%S" cell-value))
+                                   t t))))
 
-            ;; Replace $varname syntax - second priority
-            (goto-char (point-min))
-            (while (search-forward (concat "$" (symbol-name name)) nil t)
-              (replace-match (if (stringp value)
-                                 value
-                               (format "%S" value)) t t))
+               ;; $varname pattern (match starts with $)
+               ((eq (char-before (match-beginning 0)) ?$)
+                (replace-match (if (stringp value)
+                                   value
+                                 (format "%S" value))
+                               t t))
 
-            ;; Also handle direct variable name as whole words - lowest priority
-            (goto-char (point-min))
-            (while (re-search-forward (format "\\b%s\\b"
-                                          (regexp-quote (symbol-name name)))
-                                  nil t)
-              (let ((bounds (cons (match-beginning 0) (match-end 0))))
+               ;; bare varname pattern
+               (t
                 ;; Only replace if it's not part of vars[something]
-                (save-excursion
-                  (goto-char (car bounds))
-                  (unless (looking-back "\\[" 1)
-                    (replace-match (if (stringp value)
-                                       value
-                                     (format "%S" value)) t t))))))))
+                (unless (looking-back "\\[" 1)
+                  (replace-match (if (stringp value)
+                                     value
+                                   (format "%S" value))
+                                 t t))))))))
+
       (setq body (buffer-string)))
 
     ;; Combine with prologue and epilogue
-    (mapconcat 'identity
+    (mapconcat #'identity
                (delq nil (list prologue body epilogue))
                "\n")))
 
