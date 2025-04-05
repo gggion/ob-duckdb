@@ -771,11 +771,5 @@ This function is added to `org-babel-after-execute-hook'."
 ;; Set up babel integration when the file is loaded
 (add-hook 'org-babel-after-execute-hook 'org-babel-duckdb-babel-ansi)
 
-;; Register the language with Org Babel
-(with-eval-after-load 'org
-  (org-babel-do-load-languages
-   'org-babel-load-languages
-   (append org-babel-load-languages '((duckdb . t)))))
-
 (provide 'ob-duckdb)
 ;;; ob-duckdb.el ends here
