@@ -25,7 +25,7 @@
 ;;
 ;; Basic usage example:
 ;;
-;; #+begin_src duckdb :db mydata.db
+;; #+begin_src duckdb :db mydata.duckdb
 ;;   SELECT * FROM mytable LIMIT 10;
 ;; #+end_src
 ;;
@@ -41,6 +41,7 @@
 
 ;;; Code:
 
+;; TODO: autocompletion on src blocks
 ;; Dependencies
 (require 'org-macs)
 (require 'ob)
@@ -128,6 +129,7 @@ Returns a buffer object dedicated to the named session."
           (puthash session-name new-buffer org-babel-duckdb-sessions)
           new-buffer))))
 
+;; TODO: cleanup these unused functions
 ;; (defun org-babel-duckdb-with-earmuffs (session)
 ;;   "Return SESSION name with *asterisks* around it.
 ;; This is traditional for process buffers in Emacs.
@@ -149,7 +151,7 @@ Returns a buffer object dedicated to the named session."
 ;;       name)))
 
 ;;; Variable Handling
-
+;; BUG: Currently not working with lists (but table as variable does)
 (defun org-babel-duckdb-var-to-duckdb (var)
   "Convert an Emacs Lisp value VAR to a DuckDB SQL value.
 Handles various data types:
@@ -201,6 +203,12 @@ need to be explicitly assigned in the DuckDB session."
                (org-babel-duckdb-var-to-duckdb (cdr pair))))
      vars)))
 
+
+;; BUG:(OR FEATURE?) variable replacement works, but it replaces every instance
+;; of variable name, even inside another word example: :var my = 'test' will
+;; transform a string like my_table into test_table or  "my_cool_column_name"
+;; into test_cool_column_name
+;; TODO: make it so we dont replace duckdb/sql keywords (could probabaly use duckdb_keywords() to fetch all)
 (defun org-babel-expand-body:duckdb (body params)
   "Expand BODY with variables from PARAMS.
 This performs three types of variable substitution:
@@ -354,7 +362,7 @@ Processes raw DuckDB output to remove:
     (string-trim cleaned-output)))
 
 ;;; Execution Functions
-
+;; NOTE: Not used, but it might come in handy in the future as a parameter in order to use files to optimize memory usage
 (defun org-babel-duckdb-execute-with-file (body db-file &optional dot-commands)
   "Execute DuckDB SQL in BODY using a temporary file.
 This is for one-off (non-session) query execution.
