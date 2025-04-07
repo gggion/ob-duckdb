@@ -1,0 +1,1418 @@
+#+title:  ob-duckdb
+#+PROPERTY: LOGGING nil
+#+OPTIONS: ^:nil
+#+HTML: <img src="images/babel-duck-smaller.png" align="right">
+
+* ob-duckdb
+:PROPERTIES:
+:TOC: ignore
+:END:
+=ob-duckdb= brings [[https://duckdb.org/][DuckDB]], an in-process analytical database, to Org mode.
+
+This package enables you to:
++ Execute DuckDB SQL queries directly in Org mode source blocks
++ View results as tables, CSV, JSON, and other formats
++ Maintain persistent sessions for interactive data analysis
++ Connect to database files or use in-memory databases
++ Use Org variables in your queries
++ Execute system shell commands within DuckDB sessions
+
+* Contents :noexport:
+:PROPERTIES:
+:TOC:      :include siblings :depth 2 :ignore this
+:END:
+:CONTENTS:
+- [[#installation][Installation]]
+  - [[#prerequisites][Prerequisites]]
+  - [[#manual-installation][Manual Installation]]
+  - [[#with-straight][With straight]]
+  - [[#doom-emacs][Doom Emacs]]
+  - [[#melpa][MELPA]]
+- [[#features][Features]]
+- [[#usage][USAGE]]
+  - [[#basic-usage][Basic Usage]]
+  - [[#header-arguments][Header Arguments]]
+  - [[#dot-commands][Dot Commands]]
+  - [[#output-formats][Output Formats]]
+  - [[#database-connection][Database Connection]]
+  - [[#sessions][Sessions]]
+  - [[#variable-substitution][Variable Substitution]]
+  - [[#more-examples][More Examples]]
+- [[#ideas][Ideas]]
+  - [[#in-progress---using-full-org-table-as-data-source][IN PROGRESS - using full org table as data source]]
+  - [[#variable-types][variable types?]]
+- [[#troubleshooting][Troubleshooting]]
+  - [[#common-issues][Common Issues]]
+- [[#contributing][Contributing]]
+- [[#license][License]]
+:END:
+
+* Installation
+** Prerequisites
+- Emacs 28.1 or later
+- Org mode + Org Babel
+- DuckDB CLI must be installed and available in your PATH
+
+** Manual Installation
+Clone the repository and add to your load path:
+
+#+begin_src elisp
+(add-to-list 'load-path "/path/to/ob-duckdb")
+(require 'ob-duckdb)
+;; then add the babel language etc
+#+end_src
+
+** With straight
+#+begin_src elisp
+(use-package ob-duckdb
+  :straight (:host github :repo "gggion/ob-duckdb")
+  :after org
+  :config
+  (org-babel-do-load-languages
+   'org-babel-load-languages
+   (append org-babel-load-languages '((duckdb . t)))))
+#+end_src
+
+** Doom Emacs
+#+begin_src elisp
+;; packages.el
+(package! ob-duckdb
+  :recipe (:host github
+           :repo "gggion/ob-duckdb"
+           :files ("*.el")))
+
+;; config.el
+(use-package! ob-duckdb)
+(after! org
+  (org-babel-do-load-languages 'org-babel-load-languages
+   (append org-babel-load-languages '((duckdb . t)))))
+#+end_src
+
+** MELPA
+Not on melpa yet.
+* Features
+- *Execute SQL queries* directly in Org mode
+- *Persistent sessions* for maintaining database state
+- *Connect to database files* or use in-memory database
+- *Variable substitution* from Org mode elements
+- *Multiple output formats* (table, CSV, JSON, markdown, etc.)
+- *Full support for DuckDB dot commands*
+- *Shell command execution* within DuckDB sessions
+- *ANSI color support* for colorized output (mostly for exception output or duckbox mode output)
+- *Customizable display options* for query results
+* USAGE
+** Basic Usage
+
+Basic Basic Basic example
+#+begin_src org
+#+begin_src duckdb
+#+end_src
+#+begin_src duckdb :wrap example
+  SELECT 1 AS test;
+#+end_src
+
+RESULTS:
+#+begin_example
+┌───────┐
+│ test  │
+│ int32 │
+├───────┤
+│     1 │
+└───────┘
+#+end_example
+
+Connect to a database file:
+#+begin_src org
+#+begin_src duckdb :db test_database.duckdb
+#+end_src
+#+begin_src duckdb :db test_database.duckdb
+  CREATE TABLE IF NOT EXISTS test_table (
+    id INTEGER,
+    name VARCHAR,
+    created_at TIMESTAMP
+  );
+
+  INSERT INTO test_table VALUES
+    (1, 'First entry', CURRENT_TIMESTAMP),
+    (2, 'Second entry', CURRENT_TIMESTAMP);
+
+  SELECT * FROM test_table;
+#+end_src
+
+Results:
+#+begin_example
+┌───────┬──────────────┬─────────────────────────┐
+│  id   │     name     │       created_at        │
+│ int32 │   varchar    │        timestamp        │
+├───────┼──────────────┼─────────────────────────┤
+│     1 │ First entry  │ 2025-04-05 16:58:59.59  │
+│     2 │ Second entry │ 2025-04-05 16:58:59.59  │
+└───────┴──────────────┴─────────────────────────┘
+#+end_example
+
+** Header Arguments
+
+=ob-duckdb= supports these header arguments, I've added some of the on/off dot commands from the cli as arguments.
+
+| Argument     | Description                                      | Example                 | dot command            |
+|--------------+--------------------------------------------------+-------------------------+------------------------|
+| =:db=        | Database file path (or =:memory:= for in-memory) | =:db test.duckdb=       |                        |
+| =:session=   | Session name for persistent connections          | =:session my-session=   |                        |
+| =:timer=     | Show execution time                              | =:timer on=             | ~.timer on/off~        |
+| =:headers=   | Show column headers                              | =:headers on=           | ~.headers on/off~      |
+| =:nullvalue= | String to display for NULL values                | =:nullvalue "N/A"=      | ~.nullvalue~           |
+| =:separator= | Column separator for output                      | =:separator "\"=        | ~.separator COL ?ROW?~ |
+| =:echo=      | Echo commands in output                          | =:echo on=              | ~.echo on/off~         |
+| =:bail=      | Exit on error                                    | =:bail on=              | ~.bail on/off~         |
+| =:output=    | Output handling                                  | =:output buffer=        |                        |
+| =:prologue=  | SQL to execute before the main body              | =:prologue "CREATE..."= |                        |
+| =:epilogue=  | SQL to execute after the main body               | =:epilogue "DROP..."=   |                        |
+
+
+*** Format Examples
+**** Markdown format
+
+#+begin_src org
+#+begin_src duckdb :format markdown :headers on
+#+end_src
+#+begin_src duckdb :format markdown :headers on
+  SELECT
+    date_part('year', d) AS year,
+    date_part('month', d) AS month,
+    date_part('day', d) AS day
+  FROM (VALUES
+    ('2023-01-15'::DATE),
+    ('2023-06-30'::DATE),
+    ('2023-12-25'::DATE)
+  ) AS dates(d);
+#+end_src
+
+
+Results:
+#+begin_example
+  year | month | day |
+  2023 | 1 | 15 |
+  2023 | 6 | 30 |
+  2023 | 12 | 25 |
+#+end_example
+
+**** JSON format
+
+#+begin_src org
+#+begin_src duckdb :format json :wrap src json
+#+end_src
+#+begin_src duckdb :format json :wrap src json
+  SELECT
+    json_object('id', id, 'name', name) AS json_data
+  FROM (VALUES
+    (1, 'Alice'),
+    (2, 'Bob'),
+    (3, 'Charlie')
+  ) AS t(id, name);
+#+end_src
+
+Results:
+#+begin_src json
+[{"json_data":{"id":1,"name":"Alice"}},
+{"json_data":{"id":2,"name":"Bob"}},
+{"json_data":{"id":3,"name":"Charlie"}}]
+#+end_src
+**** Latex
+Duckdb supports latex as an output format, which is pretty neat, if you have latex installed and ~org-latex-preview~ enabled you can render the table in your org buffer.
+
+#+begin_src org
+#+HEADER: :format latex
+#+HEADER: :timer on
+#+HEADER: :wrap src latex
+#+begin_src duckdb
+#+end_src
+#+HEADER: :format latex
+#+HEADER: :timer on
+#+HEADER: :wrap src latex
+#+begin_src duckdb
+  -- Test multiple header arguments together
+  SELECT
+    row_number() OVER () AS id,
+    (random() * 100)::INTEGER AS random_number,
+    CASE WHEN random() > 0.5 THEN 'Group A' ELSE 'Group B' END AS category
+  FROM range(1, 11);
+#+end_src
+
+RESULTS:
+#+begin_src text
+\begin{tabular}{|rrl|}
+\hline
+id & random_number & category \\
+\hline
+1  & 64            & Group B  \\
+2  & 18            & Group A  \\
+3  & 63            & Group A  \\
+4  & 45            & Group A  \\
+5  & 31            & Group B  \\
+6  & 90            & Group A  \\
+7  & 31            & Group A  \\
+8  & 5             & Group B  \\
+9  & 12            & Group A  \\
+10 & 55            & Group B  \\
+\hline
+\end{tabular}
+#+end_src
+
+**** Custom separator
+
+#+begin_src org
+#+begin_src duckdb :format csv :separator "@@@@" :headers on
+#+end_src
+#+begin_src duckdb :format csv :separator "@@@@" :headers on
+  SELECT
+    'Column 1' AS first,
+    'Column 2' AS second,
+    'Column 3' AS third
+  UNION ALL
+  SELECT 'Data 1', 'Data 2', 'Data 3';
+#+end_src
+
+Results:
+#+begin_example
+first@@@@second@@@@third
+Column 1@@@@Column 2@@@@Column 3
+Data 1@@@@Data 2@@@@Data 3
+#+end_example
+
+**** Custom NULL value display
+
+#+begin_src org
+#+begin_src duckdb :nullvalue "N/A" :headers on
+#+end_src
+#+begin_src duckdb :nullvalue "N/A" :headers on
+  SELECT
+    1 AS id,
+    NULL AS missing_value,
+    'present' AS existing_value
+  UNION ALL
+  SELECT 2, 'found', NULL;
+#+end_src
+
+Results:
+#+begin_example
+┌───────┬───────────────┬────────────────┐
+│  id   │ missing_value │ existing_value │
+│ int32 │    varchar    │    varchar     │
+├───────┼───────────────┼────────────────┤
+│     1 │ N/A           │ present        │
+│     2 │ found         │ N/A            │
+└───────┴───────────────┴────────────────┘
+#+end_example
+
+** Dot Commands
+DuckDB's dot commands are fully supported inside the src block, you can see all of them by doing ~.help -all~.
+
+#+begin_src org
+#+begin_src duckdb
+#+end_src
+#+begin_src duckdb
+.print since we're using duckdb CLI, most (haven't tested them all) dot commands can be used inside the org block without issues:
+.help -all
+#+end_src
+
+RESULTS:
+#+begin_src text
+since we're using duckdb CLI, most (haven't tested them all) dot commands can be used inside the org block without issues:
+
+.bail on|off             Stop after hitting an error.  Default OFF
+.binary on|off           Turn binary output on or off.  Default OFF
+.cd DIRECTORY            Change the working directory to DIRECTORY
+.changes on|off          Show number of rows changed by SQL
+.check GLOB              Fail if output since .testcase does not match
+.columns                 Column-wise rendering of query results
+.constant ?COLOR?        Sets the syntax highlighting color used for constant values
+   COLOR is one of:
+     red|green|yellow|blue|magenta|cyan|white|brightblack|brightred|brightgreen
+     brightyellow|brightblue|brightmagenta|brightcyan|brightwhite
+.constantcode ?CODE?     Sets the syntax highlighting terminal code used for constant values
+.databases               List names and files of attached databases
+.decimal_sep SEP         Sets the decimal separator used when rendering numbers. Only for duckbox mode.
+.dump ?TABLE?            Render database content as SQL
+   Options:
+     --preserve-rowids      Include ROWID values in the output
+     --newlines             Allow unescaped newline characters in output
+   TABLE is a LIKE pattern for the tables to dump
+   Additional LIKE patterns can be given in subsequent arguments
+.echo on|off             Turn command echo on or off
+.excel                   Display the output of next command in spreadsheet
+   --bom                   Put a UTF8 byte-order mark on intermediate file
+.edit                    Opens an external text editor to edit a query.
+   Notes:
+     ,*  The editor is read from the environment variables
+        DUCKDB_EDITOR, EDITOR, VISUAL in-order
+     ,* If none of these are set, the default editor is vi
+   ,* \e can be used as an alias for .edit
+.exit ?CODE?             Exit this program with return-code CODE
+.explain ?on|off|auto?   Change the EXPLAIN formatting mode.  Default: auto
+.fullschema ?--indent?   Show schema and the content of sqlite_stat tables
+.headers on|off          Turn display of headers on or off
+.help ?-all? ?PATTERN?   Show help text for PATTERN
+.highlight [on|off]      Toggle syntax highlighting in the shell on/off
+.highlight_colors [element] [color]  ([bold])? Configure highlighting colors
+.highlight_errors [on|off] Toggle highlighting of errors in the shell on/off
+.highlight_results [on|off] Toggle highlighting of results in the shell on/off
+.import FILE TABLE       Import data from FILE into TABLE
+   Options:
+     --ascii               Use \037 and \036 as column and row separators
+     --csv                 Use , and \n as column and row separators
+     --skip N              Skip the first N rows of input
+     -v                    "Verbose" - increase auxiliary output
+   Notes:
+     ,*  If TABLE does not exist, it is created.  The first row of input
+        determines the column names.
+     ,*  If neither --csv or --ascii are used, the input mode is derived
+        from the ".mode" output mode
+     ,*  If FILE begins with "|" then it is a command that generates the
+        input text.
+.indexes ?TABLE?         Show names of indexes
+                           If TABLE is specified, only show indexes for
+                           tables matching TABLE using the LIKE operator.
+.keyword ?COLOR?         Sets the syntax highlighting color used for keywords
+   COLOR is one of:
+     red|green|yellow|blue|magenta|cyan|white|brightblack|brightred|brightgreen
+     brightyellow|brightblue|brightmagenta|brightcyan|brightwhite
+.keywordcode ?CODE?      Sets the syntax highlighting terminal code used for keywords
+.large_number_rendering all|footer|off Toggle readable rendering of large numbers (duckbox only)
+.log FILE|off            Turn logging on or off.  FILE can be stderr/stdout
+.maxrows COUNT           Sets the maximum number of rows for display (default: 40). Only for duckbox mode.
+.maxwidth COUNT          Sets the maximum width in characters. 0 defaults to terminal width. Only for duckbox mode.
+.mode MODE ?TABLE?       Set output mode
+   MODE is one of:
+     ascii     Columns/rows delimited by 0x1F and 0x1E
+     box       Tables using unicode box-drawing characters
+     csv       Comma-separated values
+     column    Output in columns.  (See .width)
+     duckbox   Tables with extensive features
+     html      HTML <table> code
+     insert    SQL insert statements for TABLE
+     json      Results in a JSON array
+     jsonlines Results in a NDJSON
+     latex     LaTeX tabular environment code
+     line      One value per line
+     list      Values delimited by "|"
+     markdown  Markdown table format
+     quote     Escape answers as for SQL
+     table     ASCII-art table
+     tabs      Tab-separated values
+     tcl       TCL list elements
+     trash     No output
+.nullvalue STRING        Use STRING in place of NULL values
+.once ?OPTIONS? ?FILE?   Output for the next SQL command only to FILE
+     If FILE begins with '|' then open as a pipe
+       --bom  Put a UTF8 byte-order mark at the beginning
+       -e     Send output to the system text editor
+       -x     Send output as CSV to a spreadsheet (same as ".excel")
+.open ?OPTIONS? ?FILE?   Close existing database and reopen FILE
+     Options:
+        --new           Initialize FILE to an empty database
+        --nofollow      Do not follow symbolic links
+        --readonly      Open FILE readonly
+.output ?FILE?           Send output to FILE or stdout if FILE is omitted
+   If FILE begins with '|' then open it as a pipe.
+   Options:
+     --bom                 Prefix output with a UTF8 byte-order mark
+     -e                    Send output to the system text editor
+     -x                    Send output as CSV to a spreadsheet
+.print STRING...         Print literal STRING
+.prompt MAIN CONTINUE    Replace the standard prompts
+.quit                    Exit this program
+.read FILE               Read input from FILE
+.rows                    Row-wise rendering of query results (default)
+.safe_mode               Enable safe-mode
+.schema ?PATTERN?        Show the CREATE statements matching PATTERN
+     Options:
+         --indent            Try to pretty-print the schema
+.separator COL ?ROW?     Change the column and row separators
+.shell CMD ARGS...       Run CMD ARGS... in a system shell
+.show                    Show the current values for various settings
+.system CMD ARGS...      Run CMD ARGS... in a system shell
+.tables ?TABLE?          List names of tables matching LIKE pattern TABLE
+.testcase NAME           Begin redirecting output to 'testcase-out.txt'
+.thousand_sep SEP        Sets the thousand separator used when rendering numbers. Only for duckbox mode.
+.timer on|off            Turn SQL timer on or off
+.width NUM1 NUM2 ...     Set minimum column widths for columnar output
+     Negative values right-justify
+#+end_src
+
+*** Some examples of its usage
+**** .print command
+#+begin_src org
+#+begin_src duckdb
+#+end_src
+#+begin_src duckdb
+.print "IM SCREAMING AAAAAAAAA"
+#+end_src
+
+RESULTS:
+#+begin_src text
+IM SCREAMING AAAAAAAAA
+#+end_src
+
+**** Using .shell for system commands
+The =.shell= dot command allows executing shell commands within DuckDB:
+#+begin_src org
+#+begin_src duckdb :results output :wrap example
+#+end_src
+#+begin_src duckdb :results output :wrap example
+-- moving to a dir
+.cd /tmp/dumps/new
+-- List files in current directory
+.shell ls -la
+-- Show current date and time
+.shell date
+-- Run a simple echo command
+.print \n
+.shell echo "Im screaming from the shell AAAAAAAAAAAAAAAAAA"
+#+end_src
+
+RESULTS:
+#+begin_src text
+total 8
+drwx------ 2 demo demo 4096 Apr  2 19:34 .
+drwxr-x--T 6 demo demo 4096 Apr  2 23:12 ..
+Sat Apr  5 11:05:59 PM -04 2025
+
+
+Im screaming from the shell AAAAAAAAAAAAAAAAAA
+#+end_src
+
+
+**** More complex shell integration example:
+
+#+begin_src org
+#+begin_src duckdb
+#+end_src
+#+begin_src duckdb
+-- First create a temp table
+CREATE TEMPORARY TABLE sample_data AS
+  SELECT * FROM range(1, 6) AS r(num);
+
+-- Run a query
+SELECT * FROM sample_data;
+
+-- Use shell to create a directory for outputs if it doesn't exist
+.shell mkdir -p duckdb_outputs
+
+-- Export query results to a CSV file using shell command
+.mode csv
+.once duckdb_outputs/sample_data.csv
+SELECT * FROM sample_data;
+
+-- Verify the file was created
+.shell ls -l duckdb_outputs/
+
+-- Show file contents
+.shell cat duckdb_outputs/sample_data.csv
+#+end_src
+
+
+Results:
+#+begin_src text
+┌───────┐
+│  num  │
+│ int64 │
+├───────┤
+│     1 │
+│     2 │
+│     3 │
+│     4 │
+│     5 │
+└───────┘
+total 4
+-rw-r--r-- 1 demo demo 20 Apr  5 18:21 sample_data.csv
+num
+1
+2
+3
+4
+5
+#+end_src
+
+** Output Formats
+DuckDB supports various output formats through the =.mode= command,
+which can be set with the =:format= header argument.
+
+Available formats:
+ |         <r> |                                             |
+ |     ~ascii~ | Columns/rows delimited by 0x1F and 0x1E     |
+ |       ~box~ | Tables using unicode box-drawing characters |
+ |       ~csv~ | Comma-separated values                      |
+ |    ~column~ | Output in columns.  (See .width)            |
+ |   ~duckbox~ | Tables with extensive features              |
+ |      ~html~ | HTML <table> code                           |
+ |    ~insert~ | SQL insert statements for TABLE             |
+ |      ~json~ | Results in a JSON array                     |
+ | ~jsonlines~ | Results in a NDJSON                         |
+ |     ~latex~ | LaTeX tabular environment code              |
+ |      ~line~ | One value per line                          |
+ |      ~list~ | Values delimited by "\vert"                 |
+ |  ~markdown~ | Markdown table format                       |
+ |     ~quote~ | Escape answers as for SQL                   |
+ |     ~table~ | Same style as org tables                    |
+ |      ~tabs~ | Tab-separated values                        |
+ |       ~tcl~ | TCL list elements                           |
+ |     ~trash~ | No output                                   |
+
+*** Displaying output in a dedicated buffer:
+
+~:output buffer~ header argument will do just that, useful in order to display big tables outside the org mode buffer and avoid lag.
+It opens a buffer named =*DuckDB-output*= with the query results, in the future I'll probably hook this buffer to a new duckdb-mode (work in progress, two more weeks).
+#+begin_src org
+#+begin_src duckdb :output buffer
+#+end_src
+#+begin_src duckdb :output buffer :wrap example
+  -- Output goes to a dedicated buffer
+.mode box
+SELECT
+  'Row 1' AS description,
+  1 AS value,
+  CAST('2023-01-01' AS DATE) AS date
+UNION ALL
+SELECT
+  'Row 2',
+  2,
+  CAST('2023-02-15' AS DATE);
+#+end_src
+
+RESULTS:
+#+begin_example
+Output sent to buffer.
+#+end_example
+
+*** Other Examples:
+- csv
+#+begin_src org
+#+begin_src duckdb :format csv
+#+end_src
+#+begin_src duckdb :format csv :wrap example
+  SELECT * FROM generate_series(1, 5) AS s(num) ;
+#+end_src
+
+Results:
+#+begin_example
+num
+1
+2
+3
+4
+5
+#+end_example
+
+- json
+#+begin_src org
+#+begin_src duckdb :format json :wrap src json
+#+end_src
+#+begin_src duckdb :format json :wrap src json
+  SELECT
+    json_object('id', id, 'name', name) AS json_data
+  FROM (VALUES
+    (1, 'Alice'),
+    (2, 'Bob'),
+    (3, 'Charlie')
+  ) AS t(id, name);
+#+end_src
+
+Results:
+#+begin_src json
+[{"json_data":{"id":1,"name":"Alice"}},
+{"json_data":{"id":2,"name":"Bob"}},
+{"json_data":{"id":3,"name":"Charlie"}}]
+#+end_src
+
+- markdown
+#+begin_src org
+#+begin_src duckdb :format markdown :headers on
+#+end_src
+#+begin_src duckdb :format markdown :headers on :wrap example
+  SELECT
+    date_part('year', d) AS year,
+    date_part('month', d) AS month,
+    date_part('day', d) AS day
+  FROM (VALUES
+    ('2023-01-15'::DATE),
+    ('2023-06-30'::DATE),
+    ('2023-12-25'::DATE)
+  ) AS dates(d);
+#+end_src
+
+RESULTS:
+#+begin_example
+| year | month | day |
+| 2023 |     1 |  15 |
+| 2023 |     6 |  30 |
+| 2023 |    12 |  25 |
+#+end_example
+
+
+- csv, changing the separator (.spparator dot command allows column and row separators in this format ~:separator "COL" "ROW"~)
+#+begin_src org
+#+begin_src duckdb :format csv :separator "@@@@" :headers on :wrap example
+#+end_src
+#+begin_src duckdb :format csv :separator "@@@@" :headers on :wrap example
+  SELECT
+    'Column 1' AS first,
+    'Column 2' AS second,
+    'Column 3' AS third
+  UNION ALL
+  SELECT 'Data 1', 'Data 2', 'Data 3';
+#+end_src
+
+RESULTS:
+#+begin_example
+first@@@@second@@@@third
+Column 1@@@@Column 2@@@@Column 3
+Data 1@@@@Data 2@@@@Data 3
+#+end_example
+
+#+begin_src org
+#+begin_src duckdb :format line :nullvalue "N/A" :headers on :wrap example
+#+end_src
+#+begin_src duckdb :format line :nullvalue "N/A" :headers on :wrap example
+  SELECT
+    1 AS id,
+    NULL AS missing_value,
+    'present' AS existing_value
+  UNION ALL
+  SELECT 2, 'found', NULL;
+#+end_src
+
+RESULTS:
+#+begin_example
+id = 1
+ missing_value = N/A
+existing_value = present
+
+            id = 2
+ missing_value = found
+existing_value = N/A
+#+end_example
+
+** Database Connection
+The :db header allows us to use a database file, it's the equivalent of executing the command ~duckdb <db>~, <db> being the path to the db file. In order to find the db file within your folder strcuture you can eiter put the whole path in the :db parameter or you can use ~:dir~ to first navigate to the folder where your db file lives. There's also the duckdb-cli dot command ~.cd~, which does the same thing.
+
+*NOTE:* if the db file is not found, it will be created.
+
+*NOTE:* duckdb can read sqlite .db files directly, meaning you can give the path to a sqlite db file and it'll work.
+
+Examples:
+#+begin_src org
+#+begin_src duckdb :db test_database.duckdb
+#+end_src
+#+begin_src duckdb :db test_database.duckdb :wrap example
+  CREATE TABLE IF NOT EXISTS test_table (
+    id INTEGER,
+    name VARCHAR,
+    created_at TIMESTAMP
+  );
+
+  INSERT INTO test_table VALUES
+    (1, 'First entry', CURRENT_TIMESTAMP),
+    (2, 'Second entry', CURRENT_TIMESTAMP);
+
+  SELECT * FROM test_table;
+#+end_src
+
+RESULTS:
+#+begin_example
+┌───────┬──────────────┬─────────────────────────┐
+│  id   │     name     │       created_at        │
+│ int32 │   varchar    │        timestamp        │
+├───────┼──────────────┼─────────────────────────┤
+│     1 │ First entry  │ 2025-04-05 16:58:59.59  │
+│     2 │ Second entry │ 2025-04-05 16:58:59.59  │
+│     1 │ First entry  │ 2025-04-05 16:59:31.385 │
+│     2 │ Second entry │ 2025-04-05 16:59:31.385 │
+└───────┴──────────────┴─────────────────────────┘
+#+end_example
+
+
+#+begin_src org
+#+begin_src duckdb :db test_database.duckdb
+#+end_src
+#+begin_src duckdb :db test_database.duckdb :wrap example
+  -- Create a more complex schema
+  CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    username VARCHAR NOT NULL UNIQUE,
+    email VARCHAR,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS posts (
+    post_id INTEGER PRIMARY KEY,
+    user_id INTEGER,
+    title VARCHAR NOT NULL,
+    content TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+  );
+
+  -- Add some test data
+  INSERT INTO users (user_id, username, email) VALUES
+    (1, 'alice', 'alice@example.com'),
+    (2, 'bob', 'bob@example.com'),
+    (3, 'charlie', 'charlie@example.com');
+
+  INSERT INTO posts (post_id, user_id, title, content) VALUES
+    (1, 1, 'Alice First Post', 'Hello from Alice!'),
+    (2, 2, 'Bob Introduction', 'Hi, I am Bob.'),
+    (3, 1, 'Alice Again', 'Second post from Alice');
+
+  -- Run a join query
+  SELECT
+    u.username,
+    p.title,
+    p.created_at
+  FROM posts p
+  JOIN users u ON p.user_id = u.user_id
+  ORDER BY p.created_at DESC;
+#+end_src
+
+RESULTS:
+#+begin_example
+┌──────────┬──────────────────┬─────────────────────────┐
+│ username │      title       │       created_at        │
+│ varchar  │     varchar      │        timestamp        │
+├──────────┼──────────────────┼─────────────────────────┤
+│ alice    │ Alice First Post │ 2025-04-05 16:59:10.818 │
+│ bob      │ Bob Introduction │ 2025-04-05 16:59:10.818 │
+│ alice    │ Alice Again      │ 2025-04-05 16:59:10.818 │
+└──────────┴──────────────────┴─────────────────────────┘
+#+end_example
+
+** Sessions
+As you probably know, babel sessions allow us to keep state between source blocks. This can be useful for building up tables incrementally or creating multi-step analyses as if we were working on a db file.
+
+#+begin_src org
+#+begin_src duckdb :session my-session-test :results output
+#+end_src
+#+begin_src duckdb :session my-session-test :results output
+  -- First command in the session
+  CREATE TEMPORARY TABLE session_test (id INTEGER, value VARCHAR);
+  INSERT INTO session_test VALUES (1, 'First value');
+  select * from session_test;
+#+end_src
+
+RESULTS:
+#+begin_example
+ ┌───────┬─────────────┐
+ │  id   │    value    │
+ │ int32 │   varchar   │
+ ├───────┼─────────────┤
+ │   1   │ First value │
+ └───────┴─────────────┘
+#+end_example
+
+
+#+begin_src org
+#+begin_src duckdb :session my-session-test :results output
+#+end_src
+#+begin_src duckdb :session my-session-test :results output
+  -- Second command uses the same session and can access previous data
+  INSERT INTO session_test VALUES (2, 'Second value');
+  SELECT * FROM session_test ORDER BY id;
+#+end_src
+
+RESULTS:
+#+begin_example
+┌───────┬──────────────┐
+│  id   │    value     │
+│ int32 │   varchar    │
+├───────┼──────────────┤
+│     1 │ First value  │
+│     2 │ Second value │
+└───────┴──────────────┘
+#+end_example
+
+
+Sessions can also be connected to database files:
+#+begin_src org
+#+begin_src duckdb :session db-session :db test_database.duckdb
+#+end_src
+#+begin_src duckdb :session db-session :db test_database.duckdb
+  -- This session connects to a specific database file
+  SELECT 'New session with database file' AS message;
+
+  -- Access tables from the database
+  SELECT COUNT(*) AS user_count FROM users;
+#+end_src
+
+*NOTE*: The :db argument is the equivalent of doing ~duckdb some_database~, which means that DuckDb won't allow multiple processes connected to the same db file (see [[https://duckdb.org/docs/stable/connect/concurrency.html][Concurrency]]). This isn't an issue on non-session source blocks since we start and kill the duckdb process. But in the case of sessions, it wont be possible to use the same db as usual if it's being used in another session.
+Because of this, I've added a couple interactive functions to manage sessions:
+
+| Function                            | Description                                                                                                                               |
+|-------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------|
+| ~org-babel-duckdb-create-session~   | Creates a new DuckDB session with optional database file connection. Prompts for session name and database path interactively.            |
+| ~org-babel-duckdb-delete-session~   | Terminates a DuckDB session, kills its buffer, and removes it from the session registry. Uses completion to select the session to delete. |
+| ~org-babel-duckdb-display-sessions~ | Shows information about all active sessions in a formatted help buffer, including session names, database connections, and status.        |
+| ~org-babel-duckdb-cleanup-sessions~ | Removes dead sessions from the registry whose processes or buffers no longer exist. Helps reduce clutter.                                 |
+
+DuckDB also offers some methods to avoid this deadlock, which can be read about here: [[https://duckdb.org/docs/stable/connect/concurrency.html][Concurrency]].
+
+** Variable Substitution
+=ob-duckdb= supports using variables from the source block headers. At the
+moment variable substitution applies to strings, dollar sign variables ($var)
+and org tables.
+
+*** variable substitution
+
+#+begin_src org
+#+begin_src duckdb :var min_value=5 max_value=10
+#+end_src
+#+begin_src duckdb :var min_value=5 max_value=10
+  -- variable substitution
+  SELECT *
+  FROM generate_series(min_value, max_value) AS s(value)
+  WHERE value BETWEEN min_value AND max_value;
+#+end_src
+
+Results:
+#+begin_example
+┌───────┐
+│ value │
+│ int64 │
+├───────┤
+│     5 │
+│     6 │
+│     7 │
+│     8 │
+│     9 │
+│    10 │
+└───────┘
+#+end_example
+
+*** String variables
+
+#+begin_src org
+#+begin_src duckdb :var name_variable="'test_name'" table_variable="'test_table'"
+#+end_src
+#+begin_src duckdb :var name_variable="'test_name'" table_variable="'test_table'"
+  -- String variable substitution
+  SELECT 'Hello, ' || name AS greeting;
+
+  -- Table name variable substitution
+  SELECT 'Table name is: ' || $table_variable AS info;
+#+end_src
+
+RESULTS:
+#+begin_example
+┌───────────────────────────┐
+│           info            │
+│          varchar          │
+├───────────────────────────┤
+│ Table name is: test_table │
+└───────────────────────────┘
+#+end_example
+
+
+This can quickly get confusing since at the moment the variable substitution is absolute, meaning if our variable name is ~table~, it'll replace all instances of ~table~ within the block to our value, and this applies to keywords too, meaning this:
+
+#+begin_src org
+#+begin_src duckdb :var select='test_table'
+#+end_src
+#+begin_src duckdb :var select='test_table'
+select 'select is being replaced here' from select;
+#+end_src
+
+Will result in this:
+#+begin_example
+Parser Error: syntax error at or near "test_table"
+
+LINE 1: test_table 'test_table is being replaced here' from test_table...
+        ^
+[ Babel evaluation exited with code 1 ]
+#+end_example
+
+Im still unsure if to simply allow for the default behaviour or try to implement some rules to the substitution.
+
+*** Table lookup syntax
+
+My goto for variable substitution, a bit more orderly and allows keeping track of multiple variables since we can reuse the whole table in multiple blocks by simply using it's name in the variable header.
+
+#+begin_src org
+#+name: lookup_table
+#+end_src
+#+name: lookup_table
+| key     | value                  |
+|---------+------------------------|
+| a       | 'apple'                |
+| b       | 'banana'               |
+| c       | 'cranberry'            |
+| message | 'IM SCREAMING AAAAAAA' |
+
+#+begin_src org
+#+begin_src duckdb :var data=lookup_table :headers on
+#+end_src
+#+begin_src duckdb :var data=lookup_table :headers on
+  -- Test table lookup with the varname[key] syntax
+  SELECT
+    'a key refers to ' || data[a] AS a_lookup,
+    'b key refers to ' || data[b] AS b_lookup,
+    'c key refers to ' || data[c] AS c_lookup;
+#+end_src
+
+Results:
+#+begin_example
+┌───────────────────────┬────────────────────────┬───────────────────────────┐
+│       a_lookup        │        b_lookup        │         c_lookup          │
+│        varchar        │        varchar         │          varchar          │
+├───────────────────────┼────────────────────────┼───────────────────────────┤
+│ a key refers to apple │ b key refers to banana │ c key refers to cranberry │
+└───────────────────────┴────────────────────────┴───────────────────────────┘
+#+end_example
+
+#+begin_src org
+#+begin_src duckdb :var data=lookup_table :wrap example :format line
+#+end_src
+#+begin_src duckdb :var data=lookup_table :wrap example :format line
+  -- Test table lookup with the varname[key] syntax
+  SELECT data[message] as IMPORTANT_MESSAGE;
+#+end_src
+
+RESULTS:
+#+begin_example
+IMPORTANT_MESSAGE = IM SCREAMING AAAAAAA
+#+end_example
+
+
+*** Some fun subtitution possiblities
+**** queries as variables
+#+begin_src org
+#+name: var_table_name
+#+end_src
+#+name: var_table_name
+| key        | value                  |
+|------------+------------------------|
+| query1     | select [ 1,2,3,4,5,6 ] |
+| query2     | select unnest(#1) from |
+| table_name | some_table             |
+#+begin_src org
+#+HEADER: :var var_table=var_table_name
+#+begin_src duckdb
+#+end_src
+
+#+HEADER: :var var_table=var_table_name
+#+begin_src duckdb
+.echo on
+var_table[query2]( var_table[query1] as var_table[table_name] );
+#+end_src
+
+RESULTS:
+#+begin_example
+select unnest(#1) from( select [ 1,2,3,4,5,6 ] as some_table );
+┌────────────┐
+│ unnest(#1) │
+│   int32    │
+├────────────┤
+│          1 │
+│          2 │
+│          3 │
+│          4 │
+│          5 │
+│          6 │
+└────────────┘
+.exit
+#+end_example
+
+**** substituion can also apply to variables depending on header order
+#+begin_src org
+#+HEADER: :var commands="output_format"
+#+HEADER: :var output_format="dot_command1\ndot_command2\ndot_command3"
+#+HEADER: :var dot_command1=".mode csv"
+#+HEADER: :var dot_command2=".timer on"
+#+HEADER: :var dot_command3=".echo on"
+#+HEADER: :var query="SELECT '123123123' as some_column;"
+#+NAME: duckdb-execute-query
+#+begin_src duckdb
+#+end_src
+#+HEADER: :var commands="output_format"
+#+HEADER: :var output_format="dot_command1\ndot_command2\ndot_command3"
+#+HEADER: :var dot_command1=".mode csv"
+#+HEADER: :var dot_command2=".timer on"
+#+HEADER: :var dot_command3=".echo on"
+#+HEADER: :var query="SELECT '123123123' as some_column;"
+#+NAME: duckdb-execute-query
+#+begin_src duckdb
+commands
+query
+#+end_src
+
+RESULTS:
+#+begin_example
+SELECT '123123123' as some_column;
+some_column
+123123123
+Run Time (s): real 0.000 user 0.000172 sys 0.000115
+#+end_example
+
+** More Examples
+*** Data Types
+DuckDB supports a variety of data types, including complex ones:
+#+begin_src org
+#+begin_src duckdb :headers on :session data_types_example :format duckbox :wrap example
+#+end_src
+#+begin_src duckdb :headers on :session data_types_example :format duckbox :wrap example
+  -- Test various DuckDB data types
+  CREATE OR REPLACE TABLE data_types_table AS
+  SELECT
+    42::TINYINT AS tiny_int,
+    42::SMALLINT AS small_int,
+    42::INTEGER AS int,
+    42::BIGINT AS big_int,
+    42.5::FLOAT AS float_val,
+    42.5::DOUBLE AS double_val,
+    'hello'::VARCHAR AS str,
+    TRUE::BOOLEAN AS bool_val,
+    '2023-01-15'::DATE AS date_val,
+    '12:34:56'::TIME AS time_val,
+    '2023-01-15 12:34:56'::TIMESTAMP AS timestamp_val,
+    ARRAY[1, 2, 3] AS array_val,
+    STRUCT_PACK(x := 1, y := 'hello') AS struct_val,
+    MAP([1, 2], ['one', 'two']) AS map_val;
+
+SELECT * from data_types_table;
+#+end_src
+
+RESULTS:
+#+begin_example
+┌──────────┬───────────┬───┬──────────────────────┬──────────────────────┐
+│ tiny_int │ small_int │ … │      struct_val      │       map_val        │
+│   int8   │   int16   │   │ struct(x integer, …  │ map(integer, varch…  │
+├──────────┼───────────┼───┼──────────────────────┼──────────────────────┤
+│    42    │    42     │ … │ {'x': 1, 'y': hello} │ {1=one, 2=two}       │
+├──────────┴───────────┴───┴──────────────────────┴──────────────────────┤
+│ 1 rows                                            14 columns (4 shown) │
+└────────────────────────────────────────────────────────────────────────┘
+#+end_example
+
+#+begin_src org
+#+begin_src duckdb :headers on :results drawer :session data_types_example :format box :wrap example
+#+end_src
+#+begin_src duckdb :headers on :results drawer :session data_types_example :format box :wrap example
+DESCRIBE data_types_table;
+#+end_src
+
+RESULTS:
+#+begin_example
+┌───────────────┬──────────────────────────────┬──────┬──────┬─────────┬───────┐
+│  column_name  │         column_type          │ null │ key  │ default │ extra │
+├───────────────┼──────────────────────────────┼──────┼──────┼─────────┼───────┤
+│ tiny_int      │ TINYINT                      │ YES  │ NULL │ NULL    │ NULL  │
+│ small_int     │ SMALLINT                     │ YES  │ NULL │ NULL    │ NULL  │
+│ int           │ INTEGER                      │ YES  │ NULL │ NULL    │ NULL  │
+│ big_int       │ BIGINT                       │ YES  │ NULL │ NULL    │ NULL  │
+│ float_val     │ FLOAT                        │ YES  │ NULL │ NULL    │ NULL  │
+│ double_val    │ DOUBLE                       │ YES  │ NULL │ NULL    │ NULL  │
+│ str           │ VARCHAR                      │ YES  │ NULL │ NULL    │ NULL  │
+│ bool_val      │ BOOLEAN                      │ YES  │ NULL │ NULL    │ NULL  │
+│ date_val      │ DATE                         │ YES  │ NULL │ NULL    │ NULL  │
+│ time_val      │ TIME                         │ YES  │ NULL │ NULL    │ NULL  │
+│ timestamp_val │ TIMESTAMP                    │ YES  │ NULL │ NULL    │ NULL  │
+│ array_val     │ INTEGER[]                    │ YES  │ NULL │ NULL    │ NULL  │
+│ struct_val    │ STRUCT(x INTEGER, y VARCHAR) │ YES  │ NULL │ NULL    │ NULL  │
+│ map_val       │ MAP(INTEGER, VARCHAR)        │ YES  │ NULL │ NULL    │ NULL  │
+└───────────────┴──────────────────────────────┴──────┴──────┴─────────┴───────┘
+#+end_example
+
+#+begin_src org
+#+begin_src duckdb :headers on :results drawer :session data_types_example :format box :wrap example
+#+end_src
+#+begin_src duckdb :headers on :results drawer :session data_types_example :format box :wrap example
+--table was too wide so we can transpose by doing this
+UNPIVOT (SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (
+    SELECT * FROM data_types_table
+)) AS t ON COLUMNS(*) INTO NAME col_name VALUE col_value;
+#+end_src
+RESULTS:
+#+begin_example
+┌───────────────┬──────────────────────┐
+│   col_name    │      col_value       │
+├───────────────┼──────────────────────┤
+│ tiny_int      │ 42                   │
+│ small_int     │ 42                   │
+│ int           │ 42                   │
+│ big_int       │ 42                   │
+│ float_val     │ 42.5                 │
+│ double_val    │ 42.5                 │
+│ str           │ hello                │
+│ bool_val      │ true                 │
+│ date_val      │ 2023-01-15           │
+│ time_val      │ 12:34:56             │
+│ timestamp_val │ 2023-01-15 12:34:56  │
+│ array_val     │ [1, 2, 3]            │
+│ struct_val    │ {'x': 1, 'y': hello} │
+│ map_val       │ {1=one, 2=two}       │
+└───────────────┴──────────────────────┘
+#+end_example
+
+
+*** Window Functions
+
+#+begin_src org
+#+begin_src duckdb :headers on
+#+end_src
+#+begin_src duckdb :headers on
+  -- Window functions
+  WITH sales AS (
+    SELECT * FROM (VALUES
+      ('North', 100),
+      ('North', 150),
+      ('South', 120),
+      ('South', 90),
+      ('East', 110),
+      ('East', 140),
+      ('West', 95),
+      ('West', 125)
+    ) AS t(region, amount)
+  )
+
+  SELECT
+    region,
+    amount,
+    SUM(amount) OVER (PARTITION BY region) AS region_total,
+    AVG(amount) OVER (PARTITION BY region) AS region_avg,
+    RANK() OVER (PARTITION BY region ORDER BY amount DESC) AS rank_in_region,
+    SUM(amount) OVER () AS grand_total
+  FROM sales
+  ORDER BY region, amount DESC;
+#+end_src
+
+
+Results:
+
+#+begin_example
+┌─────────┬────────┬──────────────┬────────────┬────────────────┬─────────────┐
+│ region  │ amount │ region_total │ region_avg │ rank_in_region │ grand_total │
+│ varchar │ int32  │    int128    │   double   │     int64      │   int128    │
+├─────────┼────────┼──────────────┼────────────┼────────────────┼─────────────┤
+│ East    │    140 │          250 │      125.0 │              1 │         930 │
+│ East    │    110 │          250 │      125.0 │              2 │         930 │
+│ North   │    150 │          250 │      125.0 │              1 │         930 │
+│ North   │    100 │          250 │      125.0 │              2 │         930 │
+│ South   │    120 │          210 │      105.0 │              1 │         930 │
+│ South   │     90 │          210 │      105.0 │              2 │         930 │
+│ West    │    125 │          220 │      110.0 │              1 │         930 │
+│ West    │     95 │          220 │      110.0 │              2 │         930 │
+└─────────┴────────┴──────────────┴────────────┴────────────────┴─────────────┘
+#+end_example
+
+*** Recursive CTE for Hierarchical Data
+
+#+begin_src org
+#+begin_src duckdb :headers on :format table
+#+end_src
+#+begin_src duckdb :headers on :format table
+  -- Recursive CTE for hierarchical data
+  WITH RECURSIVE hierarchy AS (
+    -- Base case: get root nodes (nodes with no parent)
+    SELECT 1 AS id, 'Root A' AS name, 0 AS parent_id, 0 AS level
+    UNION ALL
+    SELECT 2, 'Root B', 0, 0
+    UNION ALL
+    SELECT 3, 'Child A.1', 1, 1
+    UNION ALL
+    SELECT 4, 'Child A.2', 1, 1
+    UNION ALL
+    SELECT 5, 'Child B.1', 2, 1
+    UNION ALL
+    SELECT 6, 'Grandchild A.1.1', 3, 2
+  )
+
+  SELECT
+    id,
+    CASE
+      WHEN level = 0 THEN name
+      ELSE repeat('  ', level) || '└─ ' || name
+    END AS hierarchical_name,
+    parent_id
+  FROM hierarchy
+  ORDER BY
+    CASE WHEN parent_id = 0 THEN id ELSE parent_id END,
+    level,
+    id;
+#+end_src
+
+
+Results:
+
+#+begin_example
++----+-------------------------+-----------+
+| id |    hierarchical_name    | parent_id |
++----+-------------------------+-----------+
+| 1  | Root A                  | 0         |
+| 3  |   └─ Child A.1          | 1         |
+| 4  |   └─ Child A.2          | 1         |
+| 2  | Root B                  | 0         |
+| 5  |   └─ Child B.1          | 2         |
+| 6  |     └─ Grandchild A.1.1 | 3         |
++----+-------------------------+-----------+
+#+end_example
+
+*** JSON Processing
+
+#+begin_src org
+#+begin_src duckdb :headers on :wrap example
+#+end_src
+#+begin_src duckdb :headers on :wrap example
+  -- Test DuckDB's JSON functionality
+  CREATE TABLE json_test AS
+  SELECT
+    -- Parse JSON
+    json_extract('{"name": "Alice", "age": 30}', '$.name') AS name,
+    -- Create JSON
+    json_object('id', 1, 'tags', json_array('red', 'blue')) AS created_json,
+    -- Array access
+    json_extract(json_array(1, 2, 3), '$[1]') AS second_element,
+    -- Nested extraction
+    json_extract(
+      '{"user": {"details": {"address": {"city": "New York"}}}}',
+      '$.user.details.address.city'
+    ) AS nested_city;
+
+  SELECT * from json_test;
+  DESCRIBE SELECT * from json_test;
+#+end_src
+
+RESULTS:
+#+begin_example
+┌─────────┬────────────────────────────────┬────────────────┬─────────────┐
+│  name   │          created_json          │ second_element │ nested_city │
+│  json   │              json              │      json      │    json     │
+├─────────┼────────────────────────────────┼────────────────┼─────────────┤
+│ "Alice" │ {"id":1,"tags":["red","blue"]} │ 2              │ "New York"  │
+└─────────┴────────────────────────────────┴────────────────┴─────────────┘
+┌────────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│  column_name   │ column_type │  null   │   key   │ default │  extra  │
+│    varchar     │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├────────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ name           │ JSON        │ YES     │ NULL    │ NULL    │ NULL    │
+│ created_json   │ JSON        │ YES     │ NULL    │ NULL    │ NULL    │
+│ second_element │ JSON        │ YES     │ NULL    │ NULL    │ NULL    │
+│ nested_city    │ JSON        │ YES     │ NULL    │ NULL    │ NULL    │
+└────────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+#+end_example
+
+*** Using Prologue and Epilogue
+The =:prologue= and =:epilogue= header arguments let you execute SQL
+before and after the main body:
+
+#+begin_src org
+#+HEADER: :results drawer
+#+HEADER: :prologue "CREATE TEMP TABLE test_prologue(id INTEGER);\nINSERT INTO test_prologue VALUES (1), (2), (3);"
+#+HEADER: :epilogue "DROP TABLE test_prologue;"
+#+begin_src duckdb
+#+end_src
+#+HEADER: :results drawer
+#+HEADER: :prologue "CREATE TEMP TABLE test_prologue(id INTEGER);\nINSERT INTO test_prologue VALUES (1), (2), (3);"
+#+HEADER: :epilogue "DROP TABLE test_prologue;"
+#+begin_src duckdb
+  -- The prologue creates a table and inserts data before this query runs
+  SELECT * FROM test_prologue;
+  -- The epilogue will clean up after
+#+end_src
+
+Results:
+#+begin_example
+┌───────┐
+│  id   │
+│ int32 │
+├───────┤
+│     1 │
+│     2 │
+│     3 │
+└───────┘
+#+end_example
+
+*** Special Characters and Quotes
+#+begin_src org
+#+HEADER: :prologue UNPIVOT (SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (
+#+HEADER: :epilogue )) AS t ON COLUMNS(*) INTO NAME col_name VALUE col_value;
+#+begin_src duckdb :wrap example
+#+end_src
+#+HEADER: :prologue UNPIVOT (SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (
+#+HEADER: :epilogue )) AS t ON COLUMNS(*) INTO NAME col_name VALUE col_value;
+#+begin_src duckdb :wrap example
+  -- Test handling of quotes and special characters
+  SELECT
+    'Single ''quoted'' text' AS single_quotes,
+    'Text with "double quotes"' AS double_quotes,
+    'Text with semicolons;' AS semicolons,
+    'Line 1
+     Line 2
+     Line 3' AS multiline
+#+end_src
+
+RESULTS:
+#+begin_example
+┌───────────────┬──────────────────────────────────┐
+│   col_name    │            col_value             │
+│    varchar    │             varchar              │
+├───────────────┼──────────────────────────────────┤
+│ single_quotes │ Single 'quoted' text             │
+│ double_quotes │ Text with "double quotes"        │
+│ semicolons    │ Text with semicolons;            │
+│ multiline     │ Line 1\n     Line 2\n     Line 3 │
+└───────────────┴──────────────────────────────────┘
+#+end_example
+
+* Ideas
+** IN PROGRESS - using full org table as data source
+Querying directly from an org table is not yet supported.
+
+#+begin_src org
+#+name: complex_data
+#+end_src
+#+name: complex_data
+| first | last  | age | city        |
+|-------+-------+-----+-------------|
+| John  | Doe   |  35 | New York    |
+| Jane  | Smith |  28 | Los Angeles |
+| Bob   | Brown |  42 | Chicago     |
+
+#+begin_src org
+#+begin_src duckdb :var people=complex_data :headers on
+#+end_src
+#+begin_src duckdb :var people=complex_data :headers on
+  -- Complex table manipulation
+  WITH people_data AS (
+    SELECT first, last, age, city FROM people
+  )
+
+  SELECT
+    first || ' ' || last AS full_name,
+    CASE
+      WHEN age < 30 THEN 'Young'
+      WHEN age < 40 THEN 'Middle'
+      ELSE 'Senior'
+    END AS age_group,
+    city
+  FROM people_data
+  ORDER BY age DESC;
+#+end_src
+
+** variable types?
+Looking into being able to set variable type in the header arguments, not sure if it would be useful though.
+
+* Troubleshooting
+** Common Issues
+1. *DuckDB not found*: Ensure DuckDB CLI is installed and in your PATH, you should be able to call duckdb from your shell by doing ~duckdb~.
+2. *Session not working*: Make sure session names are consistent, you can also use ~org-babel-duckdb-display-sessions~ to check running duckdb sessions.
+3. *Installation*: Im on doom emacs so I'm not entirely sure if there will be issues installing on vanilla or other frameworks, let me know.
+* Contributing
+Contributions, bug reports, and feature requests are more than welcome, this is the first time I've done a package so I'm expecting issues to arrive or there might be some obvious optimizations that I missed, I've tried to document the code as best as possible but feel free to:
+
+1. Open issues for bug reports or feature requests
+2. Submit pull requests with improvements
+3. Share examples and documentation
+4. Suggest changes to documentation in order to improve clarity
+
+* License
+GPLv3
+
+--------------
+/Note: This package is independently developed and not officially affiliated with DuckDB./
