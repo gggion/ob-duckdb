@@ -100,10 +100,10 @@ Not on melpa yet.
 ** Basic Usage
 
 Basic Basic Basic example
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb
 #+end_src
-#+begin_src duckdb :wrap example
+#+begin_src sql :wrap example
   SELECT 1 AS test;
 #+end_src
 
@@ -118,10 +118,10 @@ RESULTS:
 #+end_example
 
 Connect to a database file:
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :db test_database.duckdb
 #+end_src
-#+begin_src duckdb :db test_database.duckdb
+#+begin_src sql :db test_database.duckdb
   CREATE TABLE IF NOT EXISTS test_table (
     id INTEGER,
     name VARCHAR,
@@ -168,10 +168,10 @@ Results:
 *** Format Examples
 **** Markdown format
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :format markdown :headers on
 #+end_src
-#+begin_src duckdb :format markdown :headers on
+#+begin_src sql :format markdown :headers on
   SELECT
     date_part('year', d) AS year,
     date_part('month', d) AS month,
@@ -194,10 +194,10 @@ Results:
 
 **** JSON format
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :format json :wrap src json
 #+end_src
-#+begin_src duckdb :format json :wrap src json
+#+begin_src sql :format json :wrap src json
   SELECT
     json_object('id', id, 'name', name) AS json_data
   FROM (VALUES
@@ -216,7 +216,7 @@ Results:
 **** Latex
 Duckdb supports latex as an output format, which is pretty neat, if you have latex installed and ~org-latex-preview~ enabled you can render the table in your org buffer.
 
-#+begin_src org
+#+begin_src text
 #+HEADER: :format latex
 #+HEADER: :timer on
 #+HEADER: :wrap src latex
@@ -225,7 +225,7 @@ Duckdb supports latex as an output format, which is pretty neat, if you have lat
 #+HEADER: :format latex
 #+HEADER: :timer on
 #+HEADER: :wrap src latex
-#+begin_src duckdb
+#+begin_src sql
   -- Test multiple header arguments together
   SELECT
     row_number() OVER () AS id,
@@ -256,10 +256,10 @@ id & random_number & category \\
 
 **** Custom separator
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :format csv :separator "@@@@" :headers on
 #+end_src
-#+begin_src duckdb :format csv :separator "@@@@" :headers on
+#+begin_src sql :format csv :separator "@@@@" :headers on
   SELECT
     'Column 1' AS first,
     'Column 2' AS second,
@@ -277,10 +277,10 @@ Data 1@@@@Data 2@@@@Data 3
 
 **** Custom NULL value display
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :nullvalue "N/A" :headers on
 #+end_src
-#+begin_src duckdb :nullvalue "N/A" :headers on
+#+begin_src sql :nullvalue "N/A" :headers on
   SELECT
     1 AS id,
     NULL AS missing_value,
@@ -303,10 +303,10 @@ Results:
 ** Dot Commands
 DuckDB's dot commands are fully supported inside the src block, you can see all of them by doing ~.help -all~.
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb
 #+end_src
-#+begin_src duckdb
+#+begin_src sql
 .print since we're using duckdb CLI, most (haven't tested them all) dot commands can be used inside the org block without issues:
 .help -all
 #+end_src
@@ -437,10 +437,10 @@ since we're using duckdb CLI, most (haven't tested them all) dot commands can be
 
 *** Some examples of its usage
 **** .print command
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb
 #+end_src
-#+begin_src duckdb
+#+begin_src sql
 .print "IM SCREAMING AAAAAAAAA"
 #+end_src
 
@@ -451,10 +451,10 @@ IM SCREAMING AAAAAAAAA
 
 **** Using .shell for system commands
 The =.shell= dot command allows executing shell commands within DuckDB:
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :results output :wrap example
 #+end_src
-#+begin_src duckdb :results output :wrap example
+#+begin_src sql :results output :wrap example
 -- moving to a dir
 .cd /tmp/dumps/new
 -- List files in current directory
@@ -480,10 +480,10 @@ Im screaming from the shell AAAAAAAAAAAAAAAAAA
 
 **** More complex shell integration example:
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb
 #+end_src
-#+begin_src duckdb
+#+begin_src sql
 -- First create a temp table
 CREATE TEMPORARY TABLE sample_data AS
   SELECT * FROM range(1, 6) AS r(num);
@@ -558,10 +558,10 @@ Available formats:
 
 ~:output buffer~ header argument will do just that, useful in order to display big tables outside the org mode buffer and avoid lag.
 It opens a buffer named =*DuckDB-output*= with the query results, in the future I'll probably hook this buffer to a new duckdb-mode (work in progress, two more weeks).
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :output buffer
 #+end_src
-#+begin_src duckdb :output buffer :wrap example
+#+begin_src sql :output buffer :wrap example
   -- Output goes to a dedicated buffer
 .mode box
 SELECT
@@ -582,10 +582,10 @@ Output sent to buffer.
 
 *** Other Examples:
 - csv
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :format csv
 #+end_src
-#+begin_src duckdb :format csv :wrap example
+#+begin_src sql :format csv :wrap example
   SELECT * FROM generate_series(1, 5) AS s(num) ;
 #+end_src
 
@@ -600,10 +600,10 @@ num
 #+end_example
 
 - json
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :format json :wrap src json
 #+end_src
-#+begin_src duckdb :format json :wrap src json
+#+begin_src sql :format json :wrap src json
   SELECT
     json_object('id', id, 'name', name) AS json_data
   FROM (VALUES
@@ -621,10 +621,10 @@ Results:
 #+end_src
 
 - markdown
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :format markdown :headers on
 #+end_src
-#+begin_src duckdb :format markdown :headers on :wrap example
+#+begin_src sql :format markdown :headers on :wrap example
   SELECT
     date_part('year', d) AS year,
     date_part('month', d) AS month,
@@ -646,10 +646,10 @@ RESULTS:
 
 
 - csv, changing the separator (.spparator dot command allows column and row separators in this format ~:separator "COL" "ROW"~)
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :format csv :separator "@@@@" :headers on :wrap example
 #+end_src
-#+begin_src duckdb :format csv :separator "@@@@" :headers on :wrap example
+#+begin_src sql :format csv :separator "@@@@" :headers on :wrap example
   SELECT
     'Column 1' AS first,
     'Column 2' AS second,
@@ -665,10 +665,10 @@ Column 1@@@@Column 2@@@@Column 3
 Data 1@@@@Data 2@@@@Data 3
 #+end_example
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :format line :nullvalue "N/A" :headers on :wrap example
 #+end_src
-#+begin_src duckdb :format line :nullvalue "N/A" :headers on :wrap example
+#+begin_src sql :format line :nullvalue "N/A" :headers on :wrap example
   SELECT
     1 AS id,
     NULL AS missing_value,
@@ -696,10 +696,10 @@ The :db header allows us to use a database file, it's the equivalent of executin
 *NOTE:* duckdb can read sqlite .db files directly, meaning you can give the path to a sqlite db file and it'll work.
 
 Examples:
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :db test_database.duckdb
 #+end_src
-#+begin_src duckdb :db test_database.duckdb :wrap example
+#+begin_src sql :db test_database.duckdb :wrap example
   CREATE TABLE IF NOT EXISTS test_table (
     id INTEGER,
     name VARCHAR,
@@ -727,10 +727,10 @@ RESULTS:
 #+end_example
 
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :db test_database.duckdb
 #+end_src
-#+begin_src duckdb :db test_database.duckdb :wrap example
+#+begin_src sql :db test_database.duckdb :wrap example
   -- Create a more complex schema
   CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -784,10 +784,10 @@ RESULTS:
 ** Sessions
 As you probably know, babel sessions allow us to keep state between source blocks. This can be useful for building up tables incrementally or creating multi-step analyses as if we were working on a db file.
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :session my-session-test :results output
 #+end_src
-#+begin_src duckdb :session my-session-test :results output
+#+begin_src sql :session my-session-test :results output
   -- First command in the session
   CREATE TEMPORARY TABLE session_test (id INTEGER, value VARCHAR);
   INSERT INTO session_test VALUES (1, 'First value');
@@ -805,10 +805,10 @@ RESULTS:
 #+end_example
 
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :session my-session-test :results output
 #+end_src
-#+begin_src duckdb :session my-session-test :results output
+#+begin_src sql :session my-session-test :results output
   -- Second command uses the same session and can access previous data
   INSERT INTO session_test VALUES (2, 'Second value');
   SELECT * FROM session_test ORDER BY id;
@@ -827,10 +827,10 @@ RESULTS:
 
 
 Sessions can also be connected to database files:
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :session db-session :db test_database.duckdb
 #+end_src
-#+begin_src duckdb :session db-session :db test_database.duckdb
+#+begin_src sql :session db-session :db test_database.duckdb
   -- This session connects to a specific database file
   SELECT 'New session with database file' AS message;
 
@@ -857,10 +857,10 @@ and org tables.
 
 *** variable substitution
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :var min_value=5 max_value=10
 #+end_src
-#+begin_src duckdb :var min_value=5 max_value=10
+#+begin_src sql :var min_value=5 max_value=10
   -- variable substitution
   SELECT *
   FROM generate_series(min_value, max_value) AS s(value)
@@ -884,10 +884,10 @@ Results:
 
 *** String variables
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :var name_variable="'test_name'" table_variable="'test_table'"
 #+end_src
-#+begin_src duckdb :var name_variable="'test_name'" table_variable="'test_table'"
+#+begin_src sql :var name_variable="'test_name'" table_variable="'test_table'"
   -- String variable substitution
   SELECT 'Hello, ' || name AS greeting;
 
@@ -908,10 +908,10 @@ RESULTS:
 
 This can quickly get confusing since at the moment the variable substitution is absolute, meaning if our variable name is ~table~, it'll replace all instances of ~table~ within the block to our value, and this applies to keywords too, meaning this:
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :var select='test_table'
 #+end_src
-#+begin_src duckdb :var select='test_table'
+#+begin_src sql :var select='test_table'
 select 'select is being replaced here' from select;
 #+end_src
 
@@ -930,7 +930,7 @@ Im still unsure if to simply allow for the default behaviour or try to implement
 
 My goto for variable substitution, a bit more orderly and allows keeping track of multiple variables since we can reuse the whole table in multiple blocks by simply using it's name in the variable header.
 
-#+begin_src org
+#+begin_src text
 #+name: lookup_table
 #+end_src
 #+name: lookup_table
@@ -941,10 +941,10 @@ My goto for variable substitution, a bit more orderly and allows keeping track o
 | c       | 'cranberry'            |
 | message | 'IM SCREAMING AAAAAAA' |
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :var data=lookup_table :headers on
 #+end_src
-#+begin_src duckdb :var data=lookup_table :headers on
+#+begin_src sql :var data=lookup_table :headers on
   -- Test table lookup with the varname[key] syntax
   SELECT
     'a key refers to ' || data[a] AS a_lookup,
@@ -962,10 +962,10 @@ Results:
 └───────────────────────┴────────────────────────┴───────────────────────────┘
 #+end_example
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :var data=lookup_table :wrap example :format line
 #+end_src
-#+begin_src duckdb :var data=lookup_table :wrap example :format line
+#+begin_src sql :var data=lookup_table :wrap example :format line
   -- Test table lookup with the varname[key] syntax
   SELECT data[message] as IMPORTANT_MESSAGE;
 #+end_src
@@ -978,7 +978,7 @@ IMPORTANT_MESSAGE = IM SCREAMING AAAAAAA
 
 *** Some fun subtitution possiblities
 **** queries as variables
-#+begin_src org
+#+begin_src text
 #+name: var_table_name
 #+end_src
 #+name: var_table_name
@@ -987,13 +987,13 @@ IMPORTANT_MESSAGE = IM SCREAMING AAAAAAA
 | query1     | select [ 1,2,3,4,5,6 ] |
 | query2     | select unnest(#1) from |
 | table_name | some_table             |
-#+begin_src org
+#+begin_src text
 #+HEADER: :var var_table=var_table_name
 #+begin_src duckdb
 #+end_src
 
 #+HEADER: :var var_table=var_table_name
-#+begin_src duckdb
+#+begin_src sql
 .echo on
 var_table[query2]( var_table[query1] as var_table[table_name] );
 #+end_src
@@ -1016,7 +1016,7 @@ select unnest(#1) from( select [ 1,2,3,4,5,6 ] as some_table );
 #+end_example
 
 **** substituion can also apply to variables depending on header order
-#+begin_src org
+#+begin_src text
 #+HEADER: :var commands="output_format"
 #+HEADER: :var output_format="dot_command1\ndot_command2\ndot_command3"
 #+HEADER: :var dot_command1=".mode csv"
@@ -1033,7 +1033,7 @@ select unnest(#1) from( select [ 1,2,3,4,5,6 ] as some_table );
 #+HEADER: :var dot_command3=".echo on"
 #+HEADER: :var query="SELECT '123123123' as some_column;"
 #+NAME: duckdb-execute-query
-#+begin_src duckdb
+#+begin_src sql
 commands
 query
 #+end_src
@@ -1049,10 +1049,10 @@ Run Time (s): real 0.000 user 0.000172 sys 0.000115
 ** More Examples
 *** Data Types
 DuckDB supports a variety of data types, including complex ones:
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :headers on :session data_types_example :format duckbox :wrap example
 #+end_src
-#+begin_src duckdb :headers on :session data_types_example :format duckbox :wrap example
+#+begin_src sql :headers on :session data_types_example :format duckbox :wrap example
   -- Test various DuckDB data types
   CREATE OR REPLACE TABLE data_types_table AS
   SELECT
@@ -1086,10 +1086,10 @@ RESULTS:
 └────────────────────────────────────────────────────────────────────────┘
 #+end_example
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :headers on :results drawer :session data_types_example :format box :wrap example
 #+end_src
-#+begin_src duckdb :headers on :results drawer :session data_types_example :format box :wrap example
+#+begin_src sql :headers on :results drawer :session data_types_example :format box :wrap example
 DESCRIBE data_types_table;
 #+end_src
 
@@ -1115,10 +1115,10 @@ RESULTS:
 └───────────────┴──────────────────────────────┴──────┴──────┴─────────┴───────┘
 #+end_example
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :headers on :results drawer :session data_types_example :format box :wrap example
 #+end_src
-#+begin_src duckdb :headers on :results drawer :session data_types_example :format box :wrap example
+#+begin_src sql :headers on :results drawer :session data_types_example :format box :wrap example
 --table was too wide so we can transpose by doing this
 UNPIVOT (SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (
     SELECT * FROM data_types_table
@@ -1149,10 +1149,10 @@ RESULTS:
 
 *** Window Functions
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :headers on
 #+end_src
-#+begin_src duckdb :headers on
+#+begin_src sql :headers on
   -- Window functions
   WITH sales AS (
     SELECT * FROM (VALUES
@@ -1199,10 +1199,10 @@ Results:
 
 *** Recursive CTE for Hierarchical Data
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :headers on :format table
 #+end_src
-#+begin_src duckdb :headers on :format table
+#+begin_src sql :headers on :format table
   -- Recursive CTE for hierarchical data
   WITH RECURSIVE hierarchy AS (
     -- Base case: get root nodes (nodes with no parent)
@@ -1251,10 +1251,10 @@ Results:
 
 *** JSON Processing
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :headers on :wrap example
 #+end_src
-#+begin_src duckdb :headers on :wrap example
+#+begin_src sql :headers on :wrap example
   -- Test DuckDB's JSON functionality
   CREATE TABLE json_test AS
   SELECT
@@ -1297,7 +1297,7 @@ RESULTS:
 The =:prologue= and =:epilogue= header arguments let you execute SQL
 before and after the main body:
 
-#+begin_src org
+#+begin_src text
 #+HEADER: :results drawer
 #+HEADER: :prologue "CREATE TEMP TABLE test_prologue(id INTEGER);\nINSERT INTO test_prologue VALUES (1), (2), (3);"
 #+HEADER: :epilogue "DROP TABLE test_prologue;"
@@ -1306,7 +1306,7 @@ before and after the main body:
 #+HEADER: :results drawer
 #+HEADER: :prologue "CREATE TEMP TABLE test_prologue(id INTEGER);\nINSERT INTO test_prologue VALUES (1), (2), (3);"
 #+HEADER: :epilogue "DROP TABLE test_prologue;"
-#+begin_src duckdb
+#+begin_src sql
   -- The prologue creates a table and inserts data before this query runs
   SELECT * FROM test_prologue;
   -- The epilogue will clean up after
@@ -1325,14 +1325,14 @@ Results:
 #+end_example
 
 *** Special Characters and Quotes
-#+begin_src org
+#+begin_src text
 #+HEADER: :prologue UNPIVOT (SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (
 #+HEADER: :epilogue )) AS t ON COLUMNS(*) INTO NAME col_name VALUE col_value;
 #+begin_src duckdb :wrap example
 #+end_src
 #+HEADER: :prologue UNPIVOT (SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (
 #+HEADER: :epilogue )) AS t ON COLUMNS(*) INTO NAME col_name VALUE col_value;
-#+begin_src duckdb :wrap example
+#+begin_src sql :wrap example
   -- Test handling of quotes and special characters
   SELECT
     'Single ''quoted'' text' AS single_quotes,
@@ -1360,7 +1360,7 @@ RESULTS:
 ** IN PROGRESS - using full org table as data source
 Querying directly from an org table is not yet supported.
 
-#+begin_src org
+#+begin_src text
 #+name: complex_data
 #+end_src
 #+name: complex_data
@@ -1370,10 +1370,10 @@ Querying directly from an org table is not yet supported.
 | Jane  | Smith |  28 | Los Angeles |
 | Bob   | Brown |  42 | Chicago     |
 
-#+begin_src org
+#+begin_src text
 #+begin_src duckdb :var people=complex_data :headers on
 #+end_src
-#+begin_src duckdb :var people=complex_data :headers on
+#+begin_src sql :var people=complex_data :headers on
   -- Complex table manipulation
   WITH people_data AS (
     SELECT first, last, age, city FROM people
