@@ -100,9 +100,7 @@ Not on melpa yet.
 ** Basic Usage
 
 Basic Basic Basic example
-#+begin_example
-#+begin_src duckdb
-#+end_example
+~#+begin_src duckdb~
 #+begin_src sql :wrap example
   SELECT 1 AS test;
 #+end_src
