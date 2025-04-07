@@ -100,6 +100,7 @@ Not on melpa yet.
 ** Basic Usage
 
 Basic Basic Basic example
+
 ~#+begin_src duckdb~
 #+begin_src sql :wrap example
   SELECT 1 AS test;
@@ -116,6 +117,7 @@ RESULTS:
 #+end_example
 
 Connect to a database file:
+
 ~#+begin_src duckdb :db test_database.duckdb~
 #+begin_src sql :db test_database.duckdb
   CREATE TABLE IF NOT EXISTS test_table (
@@ -208,10 +210,12 @@ Results:
 **** Latex
 Duckdb supports latex as an output format, which is pretty neat, if you have latex installed and ~org-latex-preview~ enabled you can render the table in your org buffer.
 
-~#+HEADER: :format latex~
-~#+HEADER: :timer on~
-~#+HEADER: :wrap src latex~
-~#+begin_src duckdb~
+#+begin_src text
+HEADER: :format latex~
+HEADER: :timer on~
+HEADER: :wrap src latex~
+begin_src duckdb~
+#+end_src
 #+HEADER: :format latex
 #+HEADER: :timer on
 #+HEADER: :wrap src latex
@@ -433,6 +437,7 @@ IM SCREAMING AAAAAAAAA
 
 **** Using .shell for system commands
 The =.shell= dot command allows executing shell commands within DuckDB:
+
 ~#+begin_src duckdb :results output :wrap example~
 #+begin_src sql :results output :wrap example
 -- moving to a dir
@@ -668,7 +673,7 @@ The :db header allows us to use a database file, it's the equivalent of executin
 
 *NOTE:* duckdb can read sqlite .db files directly, meaning you can give the path to a sqlite db file and it'll work.
 
-Examples:
+
 ~#+begin_src duckdb :db test_database.duckdb~
 #+begin_src sql :db test_database.duckdb :wrap example
   CREATE TABLE IF NOT EXISTS test_table (
@@ -946,8 +951,10 @@ IMPORTANT_MESSAGE = IM SCREAMING AAAAAAA
 | table_name | some_table             |
 
 
-~#+HEADER: :var var_table=var_table_name~
-~#+begin_src duckdb~
+#+begin_src text
++HEADER: :var var_table=var_table_name
++begin_src duckdb
+#+end_src
 #+HEADER: :var var_table=var_table_name
 #+begin_src sql
 .echo on
@@ -982,17 +989,9 @@ select unnest(#1) from( select [ 1,2,3,4,5,6 ] as some_table );
 +HEADER: :var query="SELECT '123123123' as some_column;"
 +NAME: duckdb-execute-query
 +begin_src duckdb
-#+end_src
-#+HEADER: :var commands="output_format"
-#+HEADER: :var output_format="dot_command1\ndot_command2\ndot_command3"
-#+HEADER: :var dot_command1=".mode csv"
-#+HEADER: :var dot_command2=".timer on"
-#+HEADER: :var dot_command3=".echo on"
-#+HEADER: :var query="SELECT '123123123' as some_column;"
-#+NAME: duckdb-execute-query
-#+begin_src sql
 commands
 query
++end_src
 #+end_src
 
 RESULTS:
