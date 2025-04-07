@@ -3,10 +3,6 @@
 #+OPTIONS: ^:nil
 #+HTML: <img src="images/babel-duck-smaller.png" align="right">
 
-* ob-duckdb
-:PROPERTIES:
-:TOC: ignore
-:END:
 =ob-duckdb= brings [[https://duckdb.org/][DuckDB]], an in-process analytical database, to Org mode.
 
 This package enables you to:
