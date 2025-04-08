@@ -184,6 +184,46 @@ need to be explicitly assigned in the DuckDB session."
                (org-babel-duckdb-var-to-duckdb (cdr pair))))
      vars)))
 
+(defun org-babel-duckdb-insert-org-table-markers (body)
+  "Insert markers around org-table mode sections in BODY.
+This processes all `.mode org-table` directives, replacing them with
+`.mode table` and adding appropriate START/END markers.
+Returns the modified body string."
+  ;; Quick check if processing is needed at all
+  (if (not (string-match-p "\\.mode\\s-+org-table" body))
+      body ; No org-table directives, return unchanged
+
+    (let ((lines (split-string body "\n"))
+          (result-lines nil)
+          (has-org-table nil))
+
+      ;; Process each line and collect transformed lines
+      (dolist (line lines)
+        (cond
+         ;; Found .mode org-table
+         ((string-match-p "^\\s-*\\.mode\\s-+org-table\\s-*$" line)
+          (setq has-org-table t)
+          (push ".print \"ORG_TABLE_FORMAT_START\"" result-lines)
+          (push ".mode markdown" result-lines))
+
+         ;; Found different .mode directive after we've seen org-table
+         ((and has-org-table
+               (string-match-p "^\\s-*\\.mode\\s-+" line)
+               (not (string-match-p "^\\s-*\\.mode\\s-+org-table\\s-*$" line)))
+          (push ".print \"ORG_TABLE_FORMAT_END\"" result-lines)
+          (push line result-lines)
+          (setq has-org-table nil))
+
+         ;; Any other line
+         (t
+          (push line result-lines))))
+
+      ;; Add trailing end marker if needed
+      (when has-org-table
+        (push ".print \"ORG_TABLE_FORMAT_END\"" result-lines))
+
+      ;; Join all lines with a single operation
+      (mapconcat #'identity (nreverse result-lines) "\n"))))
 
 ;; BUG:(OR FEATURE?) variable replacement works, but it replaces every instance
 ;; of variable name, even inside another word example: :var my = 'test' will
@@ -346,6 +386,78 @@ Processes raw DuckDB output to remove:
           output)))
     ;; Trim excess blank lines at the beginning and end
     (string-trim cleaned-output)))
+
+(defun org-babel-duckdb--transform-table-section (text)
+  "Transform markdown tables in TEXT into org table format.
+Specifically, changes separator lines by replacing | with + between cells
+and removes any alignment colons."
+  (let* ((lines (split-string text "\n"))
+         (transformed-lines
+          (mapcar
+           (lambda (line)
+             (if (string-match "^\\([ \t]*[|]\\)\\([-|: \t]+\\)\\([|][ \t]*\\)$" line)
+                 ;; This is a separator line
+                 (let ((prefix (match-string 1 line))
+                       (middle (match-string 2 line))
+                       (suffix (match-string 3 line)))
+                   (concat
+                    prefix
+                    ;; Replace pipes with plus AND remove colons
+                    (replace-regexp-in-string
+                     ":" "-"
+                     (replace-regexp-in-string "|" "+" middle))
+                    suffix))
+               ;; Not a separator - keep as is
+               line))
+           lines)))
+
+    ;; Join with newlines in one operation
+    (mapconcat #'identity transformed-lines "\n")))
+
+(defun org-babel-duckdb-transform-output (output)
+  "Transform DuckDB OUTPUT by converting markdown tables to org tables.
+Processes tables between ORG_TABLE_FORMAT_START and ORG_TABLE_FORMAT_END
+markers."
+
+  ;; Quick check if transformation is needed
+  (if (not (string-match-p "ORG_TABLE_FORMAT_START" output))
+      output  ;; No markers, return unchanged
+
+    (let ((result "")
+          (pos 0)
+          (in-section nil))
+
+      ;; Process the output string in chunks
+      (while (string-match "ORG_TABLE_FORMAT_\\(START\\|END\\)" output pos)
+        (let* ((match-pos (match-beginning 0))
+               (marker-type (match-string 1 output))
+               (non-marker-text (substring output pos match-pos))
+               (end-marker-pos (+ match-pos (length (match-string 0 output)))))
+
+          ;; Add text before the marker
+          (setq result
+                (concat result
+                        (if in-section
+                            ;; Process table separator lines
+                            (org-babel-duckdb--transform-table-section non-marker-text)
+                          ;; Regular text
+                          non-marker-text)))
+
+          ;; Update position and section state
+          (setq pos end-marker-pos)
+          (setq in-section (string= marker-type "START"))))
+
+      ;; Add any remaining text after the last marker
+      (setq result
+            (concat result
+                    (if in-section
+                        ;; This would be a format error (missing END), but handle anyway
+                        (org-babel-duckdb--transform-table-section (substring output pos))
+                      (substring output pos))))
+
+      result)))
+
+
 
 ;;; Execution Functions
 ;; NOTE: Not used, but it might come in handy in the future as a parameter in order to use files to optimize memory usage
@@ -642,18 +754,22 @@ Returns the query results in the format specified by result-params."
 
     ;; Create DuckDB SQL script file with proper commands
     (with-temp-file temp-in-file
-      (let ((dot-commands (org-babel-duckdb-process-params params)))
-        (when dot-commands
-          (insert dot-commands "\n"))
-        (insert expanded-body)
+      (let* ((dot-commands (org-babel-duckdb-process-params params))
+             ;; Combine dot commands with expanded body
+             (combined-content (if dot-commands
+                                   (concat dot-commands "\n" expanded-body)
+                                 expanded-body))
+             ;; Apply org-table markers to the whole script
+             (marked-content (org-babel-duckdb-insert-org-table-markers combined-content)))
+        (insert marked-content)
         ;; Add .exit to ensure clean exit
         (insert "\n.exit\n")))
 
     ;; Execute DuckDB - either in session or direct mode
     (setq raw-result
           (if use-session-p
-              ;; Session mode - uses a persistent DuckDB process
-              (let ((session-buffer (org-babel-duckdb-initiate-session session params)))
+           ;; Session mode - uses a persistent DuckDB process
+           (let ((session-buffer (org-babel-duckdb-initiate-session session params)))
                 (with-current-buffer session-buffer
                   ;; Clear any previous results
                   (goto-char (point-max))
@@ -687,8 +803,8 @@ Returns the query results in the format specified by result-params."
 
                         ;; Check if our marker is in the output
                         (save-excursion
-                          (goto-char start-point)
-                          (when (search-forward completion-marker nil t)
+         (goto-char start-point)
+         (when (search-forward completion-marker nil t)
                             (setq found t)))
 
                         ;; Adaptive wait times
@@ -696,10 +812,10 @@ Returns the query results in the format specified by result-params."
 
                       ;; Extract the output
                       (if found
-                          (let* ((marker-pos (save-excursion
-                                              (goto-char start-point)
-                                              (search-forward completion-marker nil t)
-                                              (line-beginning-position)))
+           (let* ((marker-pos (save-excursion
+         (goto-char start-point)
+         (search-forward completion-marker nil t)
+         (line-beginning-position)))
                                  (output (buffer-substring-no-properties
                                           start-point marker-pos)))
                             (org-babel-duckdb-clean-output output))
@@ -713,8 +829,11 @@ Returns the query results in the format specified by result-params."
                                    temp-out-file)))
               (org-babel-eval command "")
               (with-temp-buffer
-                (insert-file-contents temp-out-file)
-                (org-babel-duckdb-clean-output (buffer-string))))))
+         (insert-file-contents temp-out-file)
+         (org-babel-duckdb-clean-output (buffer-string))))))
+
+    ;; Transform markdown tables to org tables in marked sections
+    (setq raw-result (org-babel-duckdb-transform-output raw-result))
 
     ;; Handle output to buffer if requested
     (when use-buffer-output
