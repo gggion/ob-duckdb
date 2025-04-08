@@ -287,30 +287,13 @@ Returns a string of newline-separated dot commands to configure DuckDB."
     ;; Use with-temp-buffer for string building which benchmarks showed was fastest
     (with-temp-buffer
       ;; Add each command if its parameter is specified
-      (when format
-        (insert (format ".mode %s\n" format)))
-
-      (when timer
-        (insert (format ".timer %s\n"
-                        (if (string= timer "off") "off" "on"))))
-
-      (when headers
-        (insert (format ".headers %s\n"
-                        (if (string= headers "off") "off" "on"))))
-
-      (when nullvalue
-        (insert (format ".nullvalue %s\n" nullvalue)))
-
-      (when separator
-        (insert (format ".separator %s\n" separator)))
-
-      (when echo
-        (insert (format ".echo %s\n"
-                        (if (string= echo "off") "off" "on"))))
-
-      (when bail
-        (insert (format ".bail %s\n"
-                        (if (string= bail "off") "off" "on"))))
+      (when format    (insert (format ".mode %s\n"      format)))
+      (when nullvalue (insert (format ".nullvalue %s\n" nullvalue)))
+      (when separator (insert (format ".separator %s\n" separator)))
+      (when timer     (insert (format ".timer %s\n"     (if (string= timer "off") "off" "on"))))
+      (when headers   (insert (format ".headers %s\n"   (if (string= headers "off") "off" "on"))))
+      (when echo      (insert (format ".echo %s\n"      (if (string= echo "off") "off" "on"))))
+      (when bail      (insert (format ".bail %s\n"      (if (string= bail "off") "off" "on"))))
 
       ;; Return the buffer contents if we added any commands
       (when (> (buffer-size) 0)
