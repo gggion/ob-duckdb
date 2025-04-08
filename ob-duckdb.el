@@ -58,9 +58,9 @@
 ;; Default header arguments for duckdb blocks
 (defvar org-babel-default-header-args:duckdb
   '((:results . "output")
-    (:wrap . "example"))
+    (:wrap))
   "Default header arguments for duckdb code blocks.
-By default, uses `output' with `example' wrapper to preserve formatting.")
+By default, uses `output' with `:wrap' to preserve formatting.")
 
 (defconst org-babel-header-args:duckdb
   '((db        . :any)  ; Database file to use
