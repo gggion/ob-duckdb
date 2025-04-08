@@ -336,7 +336,29 @@ Processes raw DuckDB output to remove:
 - Excess whitespace and blank lines"
   (let ((cleaned-output
          (replace-regexp-in-string
-          "\\(?:^D[ ·]+\\|^Process duckdb finished$\\|^Use \"\\.open FILENAME\".*\n\\|^ *[0-9]+% ▕[█ ]+▏.*$\\|^marker$\\|^\\s-*echo:.*\n\\s-*headers:.*\n\\s-*mode:.*\n\\)"
+          (rx (or
+               ;; Prompt characters
+               (seq bol "D" (+ (any " ·")))
+
+               ;; Process termination message
+               (seq bol "Process duckdb finished" eol)
+
+               ;; Opening file instructions
+               (seq bol "Use \".open FILENAME\"" (zero-or-more not-newline) "\n")
+
+               ;; Progress bars
+               (seq bol (zero-or-more space)
+                    (one-or-more digit) "% ▕" (zero-or-more (any "█" " ")) "▏"
+                    (zero-or-more not-newline) eol)
+
+               ;; Marker lines
+               (seq bol "marker" eol)
+
+               ;; Config lines (echo, headers, mode)
+               (seq bol (zero-or-more space) "echo:" (zero-or-more not-newline) "\n"
+                    (zero-or-more space) "headers:" (zero-or-more not-newline) "\n"
+                    (zero-or-more space) "mode:" (zero-or-more not-newline) "\n")
+               ))
           ""
           output)))
     ;; Trim excess blank lines at the beginning and end
