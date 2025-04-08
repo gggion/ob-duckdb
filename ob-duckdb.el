@@ -56,9 +56,11 @@
 (add-to-list 'org-babel-tangle-lang-exts '("duckdb" . "sql"))
 
 ;; Default header arguments for duckdb blocks
-(defvar org-babel-default-header-args:duckdb '()
+(defvar org-babel-default-header-args:duckdb
+  '((:results . "output")
+    (:wrap . "example"))
   "Default header arguments for duckdb code blocks.
-You can customize this to set defaults like :format or :timer.")
+By default, uses `output' with `example' wrapper to preserve formatting.")
 
 (defconst org-babel-header-args:duckdb
   '((db        . :any)  ; Database file to use
@@ -433,16 +435,15 @@ Returns the session buffer with the code loaded and ready."
       buffer)))
 
 ;;; Result Processing
-
+;; TODO: not functioning properly for all .mode formats, I'll need to apply a
+;; more thorough conversion method (vectors?)
 (defun org-babel-duckdb-table-or-scalar (result)
-  "Convert RESULT into an appropriate Elisp value.
-This function analyzes the query result and decides how to format it:
+  "Convert RESULT into an appropriate Elisp value for Org table.
+This function is only used when :results table is explicitly specified.
+Attempts to parse the result as an Org-compatible table structure.
 
-If RESULT appears to be a table (has a separator line after header),
-convert it into an Elisp table structure suitable for Org mode.
-Otherwise return the string unchanged.
-
-This heuristic approach adapts the return value based on content."
+NOTE: This function should only be called when a table result
+is explicitly requested via :results table header argument."
   (let ((lines (split-string result "\n" t)))
     (if (and (> (length lines) 1)
              (string-match "^[-+|]" (nth 1 lines))) ; Look for table separator
@@ -717,14 +718,15 @@ Returns the query results in the format specified by result-params."
     ;; Process the results according to params
     (if use-buffer-output
         ;; If output is directed to a buffer, still return simple results
-        (if (member "value" result-params)
-            "Output sent to buffer."
-          (org-babel-duckdb-table-or-scalar "Output sent to buffer."))
+        "Output sent to buffer."
 
-      ;; Normal results processing
-      (org-babel-result-cond result-params
-        raw-result  ;; Raw string
-        (org-babel-duckdb-table-or-scalar raw-result))))) ;; Parsed
+      ;; Check if table results are explicitly requested
+      (if (member "table" result-params)
+          (org-babel-duckdb-table-or-scalar raw-result)
+        ;; Otherwise, return raw result with appropriate formatting
+        (org-babel-result-cond result-params
+          raw-result  ;; Raw string
+          raw-result))))) ;; Still raw - no parsing
 
 ;;; Language Integration
 
