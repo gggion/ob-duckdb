@@ -330,10 +330,10 @@ Returns a string of newline-separated dot commands to configure DuckDB."
       (when format    (insert (format ".mode %s\n"      format)))
       (when nullvalue (insert (format ".nullvalue %s\n" nullvalue)))
       (when separator (insert (format ".separator %s\n" separator)))
-      (when timer     (insert (format ".timer %s\n"     (if (string= timer "off") "off" "on"))))
+      (when timer     (insert (format ".timer %s\n"     (if (string= timer   "off") "off" "on"))))
       (when headers   (insert (format ".headers %s\n"   (if (string= headers "off") "off" "on"))))
-      (when echo      (insert (format ".echo %s\n"      (if (string= echo "off") "off" "on"))))
-      (when bail      (insert (format ".bail %s\n"      (if (string= bail "off") "off" "on"))))
+      (when echo      (insert (format ".echo %s\n"      (if (string= echo    "off") "off" "on"))))
+      (when bail      (insert (format ".bail %s\n"      (if (string= bail    "off") "off" "on"))))
 
       ;; Return the buffer contents if we added any commands
       (when (> (buffer-size) 0)
@@ -351,7 +351,7 @@ uses `org-babel-temp-file' to ensure proper file management."
 
 (defun org-babel-duckdb-clean-output (output)
   "Clean DuckDB output by removing unnecessary lines and formatting.
-Processes raw DuckDB output to remove:
+Processes raw DuckDB OUTPUT to remove:
 - Version information and connection banners
 - Progress bars
 - Prompt characters
