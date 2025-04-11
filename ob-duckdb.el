@@ -375,6 +375,7 @@ uses `org-babel-temp-file' to ensure proper file management."
       (insert body))
     temp-file))
 
+;;;###autoload
 (defun org-babel-duckdb-clean-output (output)
   "Clean DuckDB output by removing unnecessary lines and formatting.
 Processes raw DuckDB OUTPUT to remove:
@@ -386,8 +387,14 @@ Processes raw DuckDB OUTPUT to remove:
   (let ((cleaned-output
          (replace-regexp-in-string
           (rx (or
+               ;; Prompt characters - comprehensive pattern to catch all D prompts
+               (seq bol (? (0+ space)) "D" (? (0+ (any " ·"))) (? (0+ space)) eol)
+
+               ;; Also match D at the end of output
+               (seq (0+ space) "D" (0+ space) eos)
+
                ;; Prompt characters
-               (seq bol "D" (+ (any " ·")))
+               (seq bol (? (0+ space)) "D" (+ (any " ·")) (0+ space))
 
                ;; Process termination message
                (seq bol "Process duckdb finished" eol)
@@ -395,13 +402,14 @@ Processes raw DuckDB OUTPUT to remove:
                ;; Opening file instructions
                (seq bol "Use \".open FILENAME\"" (zero-or-more not-newline) "\n")
 
-               ;; Progress bars
-               (seq bol (zero-or-more space)
-                    (one-or-more digit) "% ▕" (zero-or-more (any "█" " ")) "▏"
+               ;; Marker lines - IMPORTANT: Also clean async markers
+               (seq bol (or "marker"
+                            "ob_comint_async_duckdb_start_"
+                            "ob_comint_async_duckdb_end_"
+                            "DUCKDB_START_"
+                            "DUCKDB_END_"
+                            "DUCKDB_QUERY_COMPLETE")
                     (zero-or-more not-newline) eol)
-
-               ;; Marker lines
-               (seq bol "marker" eol)
 
                ;; Config lines (echo, headers, mode)
                (seq bol (zero-or-more space) "echo:" (zero-or-more not-newline) "\n"
@@ -410,9 +418,20 @@ Processes raw DuckDB OUTPUT to remove:
                ))
           ""
           output)))
+
+    ;; Extra pass for standalone D prompts
+    (setq cleaned-output (replace-regexp-in-string "\\(^\\|\n\\)D\\($\\|\n\\)" "\\1\\2" cleaned-output))
+
+    ;; Handle D at very end of output
+    (setq cleaned-output (replace-regexp-in-string "D\\s-*$" "" cleaned-output))
+
+    ;; Handle progress bars with a dedicated pass (simpler, more reliable pattern)
+    (setq cleaned-output (replace-regexp-in-string "^.*?[0-9]+% ▕.*▏.*$" "" cleaned-output))
+
     ;; Trim excess blank lines at the beginning and end
     (string-trim cleaned-output)))
 
+;;;###autoload
 (defun org-babel-duckdb--transform-table-section (text)
   "Transform markdown tables in TEXT into org table format.
 Converts DuckDB-generated Markdown tables into proper Org tables
