@@ -97,7 +97,7 @@ These header arguments control how DuckDB executes queries and formats results:
 
 db:        Path to database file
 format:    Output format (ascii, box, column, csv, json, markdown, table, etc.)
-timer:     Show execution time (on/off)
+eanimer:     Show execution time (on/off)
 headers:   Show column headers (on/off)
 nullvalue: String to use for NULL values
 separator: Column separator for output
@@ -461,43 +461,44 @@ suitable for inclusion in Org documents. It handles both interactive
 session output and command-line execution results, removing various
 artifacts that would otherwise clutter the displayed results."
   (let* ((prompt-char (regexp-quote org-babel-duckdb-prompt-char))
+         ;; Pass 1: Remove marker lines as a group
          (cleaned-output
           (replace-regexp-in-string
-           (rx (or
-                ;; Marker lines
-                (seq bol (or "DUCKDB_START_"
-                             "DUCKDB_END_"
-                             "DUCKDB_QUERY_COMPLETE"
-                             "ORG_TABLE_FORMAT_START"
-                             "ORG_TABLE_FORMAT_END")
-                     (zero-or-more not-newline) eol)
+           (rx bol
+               (or "DUCKDB_START_" "DUCKDB_END_" "DUCKDB_QUERY_COMPLETE"
+                   "ORG_TABLE_FORMAT_START" "ORG_TABLE_FORMAT_END"
+                   "Process duckdb finished")
+               (0+ not-newline)
+               eol)
+           "" output))
 
-                ;; Process termination message
-                (seq bol "Process duckdb finished" eol)
+         ;; Pass 2: Handle file instructions and config lines
+         (cleaned-output
+          (replace-regexp-in-string
+           (rx (or (seq bol "Use \".open FILENAME\"" (0+ not-newline) "\n")
+                   (seq bol (0+ space)
+                        (or "echo:" "headers:" "mode:")
+                        (0+ not-newline) "\n")))
+           "" cleaned-output)))
 
-                ;; Opening file instructions
-                (seq bol "Use \".open FILENAME\"" (zero-or-more not-newline) "\n")
+    ;; Pass 3: Remove prompt characters
+    (setq cleaned-output (replace-regexp-in-string prompt-char "" cleaned-output))
 
-                ;; Config lines (echo, headers, mode)
-                (seq bol (zero-or-more space) "echo:" (zero-or-more not-newline) "\n"
-                     (zero-or-more space) "headers:" (zero-or-more not-newline) "\n"
-                     (zero-or-more space) "mode:" (zero-or-more not-newline) "\n")))
-           "" output)))
-
-    ;; Simply remove ALL instances of the prompt character
-    (setq cleaned-output
-          (replace-regexp-in-string prompt-char "" cleaned-output))
-
-    ;; Handle progress bars with a dedicated pass
+    ;; Pass 4: Handle progress bars
     (setq cleaned-output (replace-regexp-in-string
-                          (rx bol (0+ any) (+ digit) "% ▕" (0+ any) "▏" (0+ any) eol)
-                          ""
-                          cleaned-output))
+                         (rx bol (0+ any) (1+ digit) "% ▕" (0+ any) "▏" (0+ any) eol)
+                         ""
+                         cleaned-output))
 
-    ;; Clean up whitespace and empty lines
-    (setq cleaned-output (replace-regexp-in-string (rx bol (+ "\n")) "" cleaned-output))
-    (setq cleaned-output (replace-regexp-in-string (rx (+ "\n") eol) "" cleaned-output))
-    (setq cleaned-output (replace-regexp-in-string (rx "\n" (+ "\n")) "\n\n" cleaned-output))
+    ;; Pass 5: Clean up whitespace (grouped as one pass)
+    (setq cleaned-output
+          (replace-regexp-in-string
+           (rx (or (seq bol (+ "\n"))          ; Leading newlines
+                   (seq (+ "\n") eol)          ; Trailing newlines
+                   (seq "\n" (+ "\n"))))       ; Multiple consecutive newlines
+           (lambda (match)
+             (if (string-match-p "\n\n" match) "\n\n" ""))
+           cleaned-output))
 
     (string-trim cleaned-output)))
 
