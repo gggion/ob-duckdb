@@ -320,20 +320,17 @@ before executing DuckDB source blocks."
          (is-duckdb (and (eq (car el) 'src-block)
                          (string= (org-element-property :language el) "duckdb"))))
     (when is-duckdb
+      ;; --- PREP: Read current block properties ---
       (let* ((begin (org-element-property :begin el))
              (end (org-element-property :end el))
              (contents-begin (org-element-property :contents-begin el))
              (contents-end (org-element-property :contents-end el))
-             ;; Try different ways to get content
              (content (or (org-element-property :value el)
                           (and contents-begin contents-end
                                (buffer-substring-no-properties contents-begin contents-end))
                           ""))
              (file (buffer-file-name))
              (buffer (buffer-name))
-             (pos-key (cons begin end))
-
-             ;; Capture source block properties for state tracking
              (parameters (org-element-property :parameters el))
              (header (org-element-property :header el))
              (switches (org-element-property :switches el))
@@ -342,14 +339,9 @@ before executing DuckDB source blocks."
                            (count-lines (point-min) (point-max))))
              (name (org-element-property :name el)))
 
-        ;; First update positions of all known blocks -- this also cleans up stale blocks
-        (org-duckdb-blocks-update-all-block-positions)
-
-        ;; Check if there's a block in the registry at this position
+        ;; --- 1. Find existing ID (either from property or by position) ---
         (let* ((existing-by-position nil)
                (existing-id nil))
-
-          ;; Try to find the block at this position in the registry
           (maphash (lambda (id info)
                      (when (and (not existing-by-position)
                                 (equal (plist-get info :begin) begin)
@@ -359,47 +351,52 @@ before executing DuckDB source blocks."
                        (setq existing-by-position id)))
                    org-duckdb-blocks-registry)
 
-          ;; Get existing ID from properties or use position-matched one
           (setq existing-id (or (org-duckdb-blocks-get-block-id begin)
                                 existing-by-position))
 
-          ;; Get final block ID (existing or new), always as bare string
+          ;; --- 2. Finalize IDs ---
           (let* ((block-id (org-duckdb-blocks-normalize-id (or existing-id (org-id-uuid))))
                  (exec-id  (org-duckdb-blocks-normalize-id (org-id-uuid)))
                  (timestamp (current-time)))
-            ;; Store or update block in registry
-            (puthash block-id
-                     (list :begin begin
-                           :end end
-                           :file file
-                           :buffer buffer
-                           :content content)
-                     org-duckdb-blocks-registry)
-
-            ;; Store execution details with enhanced state tracking
-            (puthash exec-id
-                     (list :block-id block-id
-                           :begin begin
-                           :time timestamp
-                           :content content
-                           :parameters parameters
-                           :header header
-                           :switches switches
-                           :line-count line-count
-                           :name name)
-                     org-duckdb-blocks-executions)
-
-            ;; Add execution to history vector
-            (org-duckdb-blocks-add-to-history exec-id block-id timestamp)
-
-            ;; Update block properties in the buffer (ID and EXEC_ID)
+            ;; --- 3. Insert/Update property lines (may move the block!) ---
             (org-duckdb-blocks-update-properties block-id exec-id begin)
 
-            ;; Return execution info
-            (message "[duckdb-blocks] Registered block %s execution %s"
-                     (substring block-id 0 8)
-                     (substring exec-id 0 8))
-            (list :block-id block-id :exec-id exec-id)))))))
+            ;; --- 4. FULLY RESCAN block positions in buffer ---
+            (org-duckdb-blocks-update-all-block-positions)
+
+            ;; --- 5. Lookup latest block info (positions are now correct) ---
+            (let ((block-info (gethash block-id org-duckdb-blocks-registry)))
+              ;; Defensive: if block-info not found, fallback to old values
+              (let ((new-begin (or (plist-get block-info :begin) begin))
+                    (new-end   (or (plist-get block-info :end) end))
+                    (new-content (or (plist-get block-info :content) content)))
+                ;; --- 6. Store registry and history with correct positions ---
+                (puthash block-id
+                         (list :begin new-begin
+                               :end new-end
+                               :file file
+                               :buffer buffer
+                               :content new-content)
+                         org-duckdb-blocks-registry)
+
+                (puthash exec-id
+                         (list :block-id block-id
+                               :begin new-begin
+                               :time timestamp
+                               :content new-content
+                               :parameters parameters
+                               :header header
+                               :switches switches
+                               :line-count line-count
+                               :name name)
+                         org-duckdb-blocks-executions)
+
+                (org-duckdb-blocks-add-to-history exec-id block-id timestamp)
+
+                (message "[duckdb-blocks] Registered block %s execution %s"
+                         (substring block-id 0 8)
+                         (substring exec-id 0 8))
+                (list :block-id block-id :exec-id exec-id)))))))))
 
 (defun org-duckdb-blocks-goto-block (id)
   "Navigate to the DuckDB source block with ID.
