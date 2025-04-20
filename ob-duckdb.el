@@ -1230,70 +1230,71 @@ Returns the execution results formatted according to PARAMS[:result-params]."
   (let* ((session (cdr (assq :session params)))
          (use-async (and (cdr (assq :async params))
                          (string= (cdr (assq :async params)) "yes")))
-         (result-params (cdr (assq :result-params params)))
-         (expanded-body (org-babel-expand-body:duckdb body params)))
+         (result-params (cdr (assq :result-params params))))
 
     ;; Verify async requirements
     (when (and use-async
                (or (null session) (string= session "none")))
-      (user-error "[ob-duckdb] Asynchronous execution requires a session"))
+      (user-error "[ob-duckdb] Asynchronous execution requires a session. Please add ':session name' to your header arguments"))
 
-    ;; Prepare dot commands and full body
-    (let* ((dot-commands (org-babel-duckdb-process-params params))
-           (combined-body (if dot-commands
-                              (concat dot-commands "\n" expanded-body)
-                            expanded-body))
-           (marked-body (org-babel-duckdb-insert-org-table-markers combined-body)))
+    ;; Continue with expanded body and execution
+    (let ((expanded-body (org-babel-expand-body:duckdb body params)))
+      ;; Prepare dot commands and full body
+      (let* ((dot-commands (org-babel-duckdb-process-params params))
+             (combined-body (if dot-commands
+                                (concat dot-commands "\n" expanded-body)
+                              expanded-body))
+             (marked-body (org-babel-duckdb-insert-org-table-markers combined-body)))
 
-      ;; Execute differently based on sync/async
-      (if use-async
-          (progn
-            ;; Get block IDs from registration info
-            (unless org-babel-duckdb-last-registration
-              (error "No block registration info available"))
+        ;; Execute differently based on sync/async
+        (if use-async
+            (progn
+              ;; Get block IDs from registration info
+              (unless org-babel-duckdb-last-registration
+                (error "No block registration info available"))
 
-            (let ((block-id (plist-get org-babel-duckdb-last-registration :block-id))
-                  (exec-id (plist-get org-babel-duckdb-last-registration :exec-id)))
+              (let ((block-id (plist-get org-babel-duckdb-last-registration :block-id))
+                    (exec-id (plist-get org-babel-duckdb-last-registration :exec-id)))
 
-              ;; Reset registration after retrieving it
-              (setq org-babel-duckdb-last-registration nil)
+                ;; Reset registration after retrieving it
+                (setq org-babel-duckdb-last-registration nil)
 
-              ;; Execute asynchronously - it handles placeholder directly
-              (org-babel-duckdb-execute-async session marked-body params block-id exec-id)
-              "Executing asynchronously..."))
+                ;; Execute asynchronously - it handles placeholder directly
+                (org-babel-duckdb-execute-async session marked-body params block-id exec-id)
+                "Executing asynchronously..."))
 
-        ;; Execute synchronously
-        (let* ((raw-result (org-babel-duckdb-execute-sync session marked-body params))
-               (block-id nil)
-               (exec-id nil))
+          ;; Execute synchronously
+          (let* ((raw-result (org-babel-duckdb-execute-sync session marked-body params))
+                 (block-id nil)
+                 (exec-id nil))
 
-          ;; Try to get block/exec IDs from registration if available
-          (when org-babel-duckdb-last-registration
-            (setq block-id (plist-get org-babel-duckdb-last-registration :block-id)
-                  exec-id (plist-get org-babel-duckdb-last-registration :exec-id))
-            (setq org-babel-duckdb-last-registration nil))
+            ;; Try to get block/exec IDs from registration if available
+            (when org-babel-duckdb-last-registration
+              (setq block-id (plist-get org-babel-duckdb-last-registration :block-id)
+                    exec-id (plist-get org-babel-duckdb-last-registration :exec-id))
+              (setq org-babel-duckdb-last-registration nil))
 
-          ;; Process results
-          (if (and block-id exec-id)
-              ;; If we have block IDs, use the same process-and-update function
-              (org-babel-duckdb-process-and-update-result block-id raw-result params result-params)
+            ;; Process results
+            (if (and block-id exec-id)
+                ;; If we have block IDs, use the same process-and-update function
+                (org-babel-duckdb-process-and-update-result block-id raw-result params result-params)
 
-            ;; Otherwise (non-tracked execution), process directly and return
-            (let* ((cleaned-output (org-babel-duckdb-clean-output raw-result))
-                   (transformed-output (org-babel-duckdb-transform-output cleaned-output))
-                   (output-type (cdr (assq :output params)))
-                   (use-buffer-output (and output-type (string= output-type "buffer"))))
+              ;; Otherwise (non-tracked execution), process directly and return
+              (let* ((cleaned-output (org-babel-duckdb-clean-output raw-result))
+                     (transformed-output (org-babel-duckdb-transform-output cleaned-output))
+                     (output-type (cdr (assq :output params)))
+                     (use-buffer-output (and output-type (string= output-type "buffer"))))
 
-              ;; Handle output to buffer if requested
-              (if use-buffer-output
-                  (progn
-                    (org-babel-duckdb-display-buffer transformed-output)
-                    "Output sent to buffer.")
+                ;; Handle output to buffer if requested
+                (if use-buffer-output
+                    (progn
+                      (org-babel-duckdb-display-buffer transformed-output)
+                      "Output sent to buffer.")
 
-                ;; Return appropriately processed results
-                (if (member "table" result-params)
-                    (org-babel-duckdb-table-or-scalar transformed-output)
-                  transformed-output)))))))))
+                  ;; Return appropriately processed results
+                  (if (member "table" result-params)
+                      (org-babel-duckdb-table-or-scalar transformed-output)
+                    transformed-output))))))))))
 
 ;;; Language Integration
 
