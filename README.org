@@ -3,15 +3,18 @@
 #+OPTIONS: ^:nil
 #+HTML: <img src="images/babel-duck-smaller.png" align="right">
 
-=ob-duckdb= brings [[https://duckdb.org/][DuckDB]], an in-process analytical database, to Org mode.
+
+=ob-duckdb= brings [[https://duckdb.org/][DuckDB]], an in-process analytical database, to Org mode with powerful synchronous and asynchronous execution capabilities.
 
 This package enables you to:
 + Execute DuckDB SQL queries directly in Org mode source blocks
++ Run complex analytical queries asynchronously without blocking Emacs
 + View results as tables, CSV, JSON, and other formats
 + Maintain persistent sessions for interactive data analysis
 + Connect to database files or use in-memory databases
 + Use Org variables in your queries
 + Execute system shell commands within DuckDB sessions
++ Track execution history and navigate between related blocks
 
 * Contents :noexport:
 :PROPERTIES:
@@ -28,11 +31,13 @@ This package enables you to:
 - [[#usage][USAGE]]
   - [[#basic-usage][Basic Usage]]
   - [[#header-arguments][Header Arguments]]
+  - [[#asynchronous-execution][Asynchronous Execution]]
   - [[#dot-commands][Dot Commands]]
   - [[#output-formats][Output Formats]]
   - [[#database-connection][Database Connection]]
   - [[#sessions][Sessions]]
   - [[#variable-substitution][Variable Substitution]]
+  - [[#execution-history][Execution History]]
   - [[#more-examples][More Examples]]
 - [[#ideas][Ideas]]
   - [[#in-progress---using-full-org-table-as-data-source][IN PROGRESS - using full org table as data source]]
@@ -48,7 +53,6 @@ This package enables you to:
 - Emacs 28.1 or later
 - Org mode + Org Babel
 - DuckDB CLI must be installed and available in your PATH
-
 ** Manual Installation
 Clone the repository and add to your load path:
 
@@ -85,10 +89,13 @@ Clone the repository and add to your load path:
 #+end_src
 
 ** MELPA
-Not on melpa yet.
+Not on MELPA yet.
+
 * Features
 - *Execute SQL queries* directly in Org mode
-- *Persistent sessions* for maintaining database state
+- *Asynchronous execution* for long-running queries
+- *Persistent sessions* for maintaining database state across block executions
+- *Execution history* for tracking analysis workflows
 - *Connect to database files* or use in-memory database
 - *Variable substitution* from Org mode elements
 - *Multiple output formats* (table, CSV, JSON, markdown, etc.)
@@ -96,10 +103,12 @@ Not on melpa yet.
 - *Shell command execution* within DuckDB sessions
 - *ANSI color support* for colorized output (mostly for exception output or duckbox mode output)
 - *Customizable display options* for query results
+- *Block tracking system* for reliable async results
+
 * USAGE
 ** Basic Usage
 
-Basic Basic Basic example
+Basic example:
 
 ~#+begin_src duckdb~
 #+begin_src sql :wrap example
@@ -119,7 +128,7 @@ RESULTS:
 Connect to a database file:
 
 ~#+begin_src duckdb :db test_database.duckdb~
-#+begin_src sql :db test_database.duckdb
+#+begin_src sql :db test_database.duckdb :wrap example
   CREATE TABLE IF NOT EXISTS test_table (
     id INTEGER,
     name VARCHAR,
@@ -133,7 +142,7 @@ Connect to a database file:
   SELECT * FROM test_table;
 #+end_src
 
-Results:
+RESULTS:
 #+begin_example
 ┌───────┬──────────────┬─────────────────────────┐
 │  id   │     name     │       created_at        │
@@ -146,12 +155,13 @@ Results:
 
 ** Header Arguments
 
-=ob-duckdb= supports these header arguments, I've added some of the on/off dot commands from the cli as arguments.
+=ob-duckdb= supports these header arguments, including dot commands from the CLI:
 
 | Argument     | Description                                      | Example                 | dot command            |
 |--------------+--------------------------------------------------+-------------------------+------------------------|
 | =:db=        | Database file path (or =:memory:= for in-memory) | =:db test.duckdb=       |                        |
 | =:session=   | Session name for persistent connections          | =:session my-session=   |                        |
+| =:async=     | Run query asynchronously (requires session)      | =:async yes=            |                        |
 | =:timer=     | Show execution time                              | =:timer on=             | ~.timer on/off~        |
 | =:headers=   | Show column headers                              | =:headers on=           | ~.headers on/off~      |
 | =:nullvalue= | String to display for NULL values                | =:nullvalue "N/A"=      | ~.nullvalue~           |
@@ -162,12 +172,11 @@ Results:
 | =:prologue=  | SQL to execute before the main body              | =:prologue "CREATE..."= |                        |
 | =:epilogue=  | SQL to execute after the main body               | =:epilogue "DROP..."=   |                        |
 
-
 *** Format Examples
 **** Markdown format
 
 ~#+begin_src duckdb :format markdown :headers on~
-#+begin_src sql :format markdown :headers on
+#+begin_src sql :format markdown :headers on :wrap example
   SELECT
     date_part('year', d) AS year,
     date_part('month', d) AS month,
@@ -179,8 +188,7 @@ Results:
   ) AS dates(d);
 #+end_src
 
-
-Results:
+RESULTS:
 #+begin_example
   year | month | day |
   2023 | 1 | 15 |
@@ -207,8 +215,9 @@ Results:
 {"json_data":{"id":2,"name":"Bob"}},
 {"json_data":{"id":3,"name":"Charlie"}}]
 #+end_src
-**** Latex
-Duckdb supports latex as an output format, which is pretty neat, if you have latex installed and ~org-latex-preview~ enabled you can render the table in your org buffer.
+
+**** LaTeX
+DuckDB supports LaTeX as an output format, which is pretty neat. If you have LaTeX installed and ~org-latex-preview~ enabled, you can render the table in your org buffer.
 
 #+begin_src text
 HEADER: :format latex~
@@ -251,7 +260,7 @@ id & random_number & category \\
 **** Custom separator
 
 ~#+begin_src duckdb :format csv :separator "@@@@" :headers on~
-#+begin_src sql :format csv :separator "@@@@" :headers on
+#+begin_src sql :format csv :separator "@@@@" :headers on :wrap example
   SELECT
     'Column 1' AS first,
     'Column 2' AS second,
@@ -270,7 +279,7 @@ Data 1@@@@Data 2@@@@Data 3
 **** Custom NULL value display
 
 ~#+begin_src duckdb :nullvalue "N/A" :headers on~
-#+begin_src sql :nullvalue "N/A" :headers on
+#+begin_src sql :nullvalue "N/A" :headers on :wrap example
   SELECT
     1 AS id,
     NULL AS missing_value,
@@ -290,18 +299,63 @@ Results:
 └───────┴───────────────┴────────────────┘
 #+end_example
 
+** Asynchronous Execution
+
+For long-running queries, you can use asynchronous execution to avoid blocking Emacs:
+
+#+begin_src duckdb :async yes :session test :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'
+SELECT * FROM read_parquet('parquet_url') WHERE id < 10
+#+end_src
+
+Initially shows:
+#+begin_example
+Executing asynchronously...
+#+end_example
+
+And when complete, displays the results:
+#+begin_example
+┌───────┬─────────┬──────────────────────┬─────────────────────────────────────┐
+│  id   │  name   │       location       │            phoneNumbers             │
+│ int64 │ varchar │ struct(lon double,…  │ struct(phone struct(number bigint…  │
+├───────┼─────────┼──────────────────────┼─────────────────────────────────────┤
+│     0 │ p0      │ NULL                 │ {'phone': [{'number': 0, 'kind': …  │
+│     1 │ p1      │ {'lon': 1.0, 'lat'…  │ {'phone': [{'number': 1, 'kind': …  │
+│     2 │ p2      │ {'lon': 2.0, 'lat'…  │ {'phone': [{'number': 2, 'kind': …  │
+│     3 │ p3      │ NULL                 │ {'phone': [{'number': 3, 'kind': …  │
+│     4 │ p4      │ {'lon': 4.0, 'lat'…  │ {'phone': [{'number': 4, 'kind': …  │
+│     5 │ p5      │ {'lon': 5.0, 'lat'…  │ {'phone': [{'number': 5, 'kind': …  │
+│     6 │ p6      │ NULL                 │ {'phone': [{'number': 6, 'kind': …  │
+│     7 │ p7      │ {'lon': 7.0, 'lat'…  │ {'phone': [{'number': 7, 'kind': …  │
+│     8 │ p8      │ {'lon': 8.0, 'lat'…  │ {'phone': [{'number': 8, 'kind': …  │
+│     9 │ p9      │ NULL                 │ {'phone': [{'number': 9, 'kind': …  │
+├───────┴─────────┴──────────────────────┴─────────────────────────────────────┤
+│ 10 rows                                                            4 columns │
+└──────────────────────────────────────────────────────────────────────────────┘
+#+end_example
+
+*Requirements for async execution:*
+- Must use a session (`:session some-name`)
+- Must include `:async yes` in header arguments
+
+Async execution is useful for:
+- Executing queries that depend on reading files through the internet (eg aws s3 or some other file from an url)
+- Very large queries that would otherwise lock up Emacs
+- Complicated analyses that take more than a few seconds to run
+- Maintaining productivity while waiting for results
+
 ** Dot Commands
+
 DuckDB's dot commands are fully supported inside the src block, you can see all of them by doing ~.help -all~.
 
 ~#+begin_src duckdb~
-#+begin_src sql
-.print since we're using duckdb CLI, most (haven't tested them all) dot commands can be used inside the org block without issues:
-.help -all
+#+begin_src sql :wrap example
+.print "DuckDB dot commands can be used inside the org block:"
+.help
 #+end_src
 
 RESULTS:
-#+begin_src text
-since we're using duckdb CLI, most (haven't tested them all) dot commands can be used inside the org block without issues:
+#+begin_example
+DuckDB dot commands can be used inside the org block:
 
 .bail on|off             Stop after hitting an error.  Default OFF
 .binary on|off           Turn binary output on or off.  Default OFF
@@ -309,133 +363,24 @@ since we're using duckdb CLI, most (haven't tested them all) dot commands can be
 .changes on|off          Show number of rows changed by SQL
 .check GLOB              Fail if output since .testcase does not match
 .columns                 Column-wise rendering of query results
-.constant ?COLOR?        Sets the syntax highlighting color used for constant values
-   COLOR is one of:
-     red|green|yellow|blue|magenta|cyan|white|brightblack|brightred|brightgreen
-     brightyellow|brightblue|brightmagenta|brightcyan|brightwhite
-.constantcode ?CODE?     Sets the syntax highlighting terminal code used for constant values
-.databases               List names and files of attached databases
-.decimal_sep SEP         Sets the decimal separator used when rendering numbers. Only for duckbox mode.
-.dump ?TABLE?            Render database content as SQL
-   Options:
-     --preserve-rowids      Include ROWID values in the output
-     --newlines             Allow unescaped newline characters in output
-   TABLE is a LIKE pattern for the tables to dump
-   Additional LIKE patterns can be given in subsequent arguments
-.echo on|off             Turn command echo on or off
-.excel                   Display the output of next command in spreadsheet
-   --bom                   Put a UTF8 byte-order mark on intermediate file
-.edit                    Opens an external text editor to edit a query.
-   Notes:
-     ,*  The editor is read from the environment variables
-        DUCKDB_EDITOR, EDITOR, VISUAL in-order
-     ,* If none of these are set, the default editor is vi
-   ,* \e can be used as an alias for .edit
-.exit ?CODE?             Exit this program with return-code CODE
-.explain ?on|off|auto?   Change the EXPLAIN formatting mode.  Default: auto
-.fullschema ?--indent?   Show schema and the content of sqlite_stat tables
-.headers on|off          Turn display of headers on or off
-.help ?-all? ?PATTERN?   Show help text for PATTERN
-.highlight [on|off]      Toggle syntax highlighting in the shell on/off
-.highlight_colors [element] [color]  ([bold])? Configure highlighting colors
-.highlight_errors [on|off] Toggle highlighting of errors in the shell on/off
-.highlight_results [on|off] Toggle highlighting of results in the shell on/off
-.import FILE TABLE       Import data from FILE into TABLE
-   Options:
-     --ascii               Use \037 and \036 as column and row separators
-     --csv                 Use , and \n as column and row separators
-     --skip N              Skip the first N rows of input
-     -v                    "Verbose" - increase auxiliary output
-   Notes:
-     ,*  If TABLE does not exist, it is created.  The first row of input
-        determines the column names.
-     ,*  If neither --csv or --ascii are used, the input mode is derived
-        from the ".mode" output mode
-     ,*  If FILE begins with "|" then it is a command that generates the
-        input text.
-.indexes ?TABLE?         Show names of indexes
-                           If TABLE is specified, only show indexes for
-                           tables matching TABLE using the LIKE operator.
-.keyword ?COLOR?         Sets the syntax highlighting color used for keywords
-   COLOR is one of:
-     red|green|yellow|blue|magenta|cyan|white|brightblack|brightred|brightgreen
-     brightyellow|brightblue|brightmagenta|brightcyan|brightwhite
-.keywordcode ?CODE?      Sets the syntax highlighting terminal code used for keywords
-.large_number_rendering all|footer|off Toggle readable rendering of large numbers (duckbox only)
-.log FILE|off            Turn logging on or off.  FILE can be stderr/stdout
-.maxrows COUNT           Sets the maximum number of rows for display (default: 40). Only for duckbox mode.
-.maxwidth COUNT          Sets the maximum width in characters. 0 defaults to terminal width. Only for duckbox mode.
-.mode MODE ?TABLE?       Set output mode
-   MODE is one of:
-     ascii     Columns/rows delimited by 0x1F and 0x1E
-     box       Tables using unicode box-drawing characters
-     csv       Comma-separated values
-     column    Output in columns.  (See .width)
-     duckbox   Tables with extensive features
-     html      HTML <table> code
-     insert    SQL insert statements for TABLE
-     json      Results in a JSON array
-     jsonlines Results in a NDJSON
-     latex     LaTeX tabular environment code
-     line      One value per line
-     list      Values delimited by "|"
-     markdown  Markdown table format
-     quote     Escape answers as for SQL
-     table     ASCII-art table
-     tabs      Tab-separated values
-     tcl       TCL list elements
-     trash     No output
-.nullvalue STRING        Use STRING in place of NULL values
-.once ?OPTIONS? ?FILE?   Output for the next SQL command only to FILE
-     If FILE begins with '|' then open as a pipe
-       --bom  Put a UTF8 byte-order mark at the beginning
-       -e     Send output to the system text editor
-       -x     Send output as CSV to a spreadsheet (same as ".excel")
-.open ?OPTIONS? ?FILE?   Close existing database and reopen FILE
-     Options:
-        --new           Initialize FILE to an empty database
-        --nofollow      Do not follow symbolic links
-        --readonly      Open FILE readonly
-.output ?FILE?           Send output to FILE or stdout if FILE is omitted
-   If FILE begins with '|' then open it as a pipe.
-   Options:
-     --bom                 Prefix output with a UTF8 byte-order mark
-     -e                    Send output to the system text editor
-     -x                    Send output as CSV to a spreadsheet
-.print STRING...         Print literal STRING
-.prompt MAIN CONTINUE    Replace the standard prompts
-.quit                    Exit this program
-.read FILE               Read input from FILE
-.rows                    Row-wise rendering of query results (default)
-.safe_mode               Enable safe-mode
-.schema ?PATTERN?        Show the CREATE statements matching PATTERN
-     Options:
-         --indent            Try to pretty-print the schema
-.separator COL ?ROW?     Change the column and row separators
-.shell CMD ARGS...       Run CMD ARGS... in a system shell
-.show                    Show the current values for various settings
-.system CMD ARGS...      Run CMD ARGS... in a system shell
-.tables ?TABLE?          List names of tables matching LIKE pattern TABLE
-.testcase NAME           Begin redirecting output to 'testcase-out.txt'
-.thousand_sep SEP        Sets the thousand separator used when rendering numbers. Only for duckbox mode.
-.timer on|off            Turn SQL timer on or off
-.width NUM1 NUM2 ...     Set minimum column widths for columnar output
-     Negative values right-justify
-#+end_src
+...
+#+end_example
 
-*** Some examples of its usage
+*** Some examples of dot command usage
 **** .print command
+
 ~#+begin_src duckdb~
-#+begin_src sql
+#+begin_src sql :wrap example
 .print "IM SCREAMING AAAAAAAAA"
 #+end_src
 
 RESULTS:
-#+begin_src text
+#+begin_example
 IM SCREAMING AAAAAAAAA
-#+end_src
+#+end_example
 
 **** Using .shell for system commands
+
 The =.shell= dot command allows executing shell commands within DuckDB:
 
 ~#+begin_src duckdb :results output :wrap example~
@@ -452,7 +397,7 @@ The =.shell= dot command allows executing shell commands within DuckDB:
 #+end_src
 
 RESULTS:
-#+begin_src text
+#+begin_example
 total 8
 drwx------ 2 demo demo 4096 Apr  2 19:34 .
 drwxr-x--T 6 demo demo 4096 Apr  2 23:12 ..
@@ -460,13 +405,12 @@ Sat Apr  5 11:05:59 PM -04 2025
 
 
 Im screaming from the shell AAAAAAAAAAAAAAAAAA
-#+end_src
-
+#+end_example
 
 **** More complex shell integration example:
 
 ~#+begin_src duckdb~
-#+begin_src sql
+#+begin_src sql :wrap example
 -- First create a temp table
 CREATE TEMPORARY TABLE sample_data AS
   SELECT * FROM range(1, 6) AS r(num);
@@ -489,9 +433,8 @@ SELECT * FROM sample_data;
 .shell cat duckdb_outputs/sample_data.csv
 #+end_src
 
-
 Results:
-#+begin_src text
+#+begin_example
 ┌───────┐
 │  num  │
 │ int64 │
@@ -510,38 +453,39 @@ num
 3
 4
 5
-#+end_src
+#+end_example
 
 ** Output Formats
+
 DuckDB supports various output formats through the =.mode= command,
 which can be set with the =:format= header argument.
 
 Available formats:
- |         <r> |                                             |
- |     ~ascii~ | Columns/rows delimited by 0x1F and 0x1E     |
- |       ~box~ | Tables using unicode box-drawing characters |
- |       ~csv~ | Comma-separated values                      |
- |    ~column~ | Output in columns.  (See .width)            |
- |   ~duckbox~ | Tables with extensive features              |
- |      ~html~ | HTML <table> code                           |
- |    ~insert~ | SQL insert statements for TABLE             |
- |      ~json~ | Results in a JSON array                     |
+ |             |                                             |
+ | ~ascii~     | Columns/rows delimited by 0x1F and 0x1E     |
+ | ~box~       | Tables using unicode box-drawing characters |
+ | ~csv~       | Comma-separated values                      |
+ | ~column~    | Output in columns.  (See .width)            |
+ | ~duckbox~   | Tables with extensive features              |
+ | ~html~      | HTML <table> code                           |
+ | ~insert~    | SQL insert statements for TABLE             |
+ | ~json~      | Results in a JSON array                     |
  | ~jsonlines~ | Results in a NDJSON                         |
- |     ~latex~ | LaTeX tabular environment code              |
- |      ~line~ | One value per line                          |
- |      ~list~ | Values delimited by "\vert"                 |
- |  ~markdown~ | Markdown table format                       |
- |     ~quote~ | Escape answers as for SQL                   |
- |     ~table~ | Same style as org tables                    |
- |      ~tabs~ | Tab-separated values                        |
- |       ~tcl~ | TCL list elements                           |
- |     ~trash~ | No output                                   |
+ | ~latex~     | LaTeX tabular environment code              |
+ | ~line~      | One value per line                          |
+ | ~list~      | Values delimited by "\vert"                 |
+ | ~markdown~  | Markdown table format                       |
+ | ~quote~     | Escape answers as for SQL                   |
+ | ~table~     | Same style as org tables                    |
+ | ~tabs~      | Tab-separated values                        |
+ | ~tcl~       | TCL list elements                           |
+ | ~trash~     | No output                                   |
+ | ~org-table~ | Special format that produces Org tables     |
 
 *** Displaying output in a dedicated buffer:
 
-~:output buffer~ header argument will do just that, useful in order to display big tables outside the org mode buffer and avoid lag.
-It opens a buffer named =*DuckDB-output*= with the query results, in the future I'll probably hook this buffer to a new duckdb-mode (work in progress, two more weeks).
-
+~:output buffer~ header argument will display results in a separate buffer, useful for large results that would otherwise clutter your Org document.
+It opens a buffer named =*DuckDB-output*= with the query results.
 
 ~#+begin_src duckdb :output buffer~
 #+begin_src sql :output buffer :wrap example
@@ -563,8 +507,40 @@ RESULTS:
 Output sent to buffer.
 #+end_example
 
-*** Other Examples:
-- csv
+The buffer content would look like:
+#+begin_example
+┌─────────────┬───────┬────────────┐
+│ description │ value │    date    │
+│   varchar   │ int32 │    date    │
+├─────────────┼───────┼────────────┤
+│ Row 1       │     1 │ 2023-01-01 │
+│ Row 2       │     2 │ 2023-02-15 │
+└─────────────┴───────┴────────────┘
+#+end_example
+
+*** Using org-table mode
+
+Use the special =org-table= format to get results in an org-compatible table:
+
+~#+begin_src duckdb~
+#+begin_src sql :wrap example
+.mode org-table
+SELECT * FROM range(1, 5) as t(num);
+#+end_src
+
+Results:
+#+begin_example
+| num |
+|-----|
+| 1   |
+| 2   |
+| 3   |
+| 4   |
+#+end_example
+
+*** Other Output Examples:
+
+**** CSV Format
 
 ~#+begin_src duckdb :format csv~
 #+begin_src sql :format csv :wrap example
@@ -581,7 +557,7 @@ num
 5
 #+end_example
 
-- json
+**** JSON Format
 
 ~#+begin_src duckdb :format json :wrap src json~
 #+begin_src sql :format json :wrap src json
@@ -601,7 +577,7 @@ Results:
 {"json_data":{"id":3,"name":"Charlie"}}]
 #+end_src
 
-- markdown
+**** Markdown Format
 
 ~#+begin_src duckdb :format markdown :headers on~
 #+begin_src sql :format markdown :headers on :wrap example
@@ -624,8 +600,7 @@ RESULTS:
 | 2023 |    12 |  25 |
 #+end_example
 
-
-- csv, changing the separator (.spparator dot command allows column and row separators in this format ~:separator "COL" "ROW"~)
+**** Custom Separator
 
 ~#+begin_src duckdb :format csv :separator "@@@@" :headers on :wrap example~
 #+begin_src sql :format csv :separator "@@@@" :headers on :wrap example
@@ -644,6 +619,7 @@ Column 1@@@@Column 2@@@@Column 3
 Data 1@@@@Data 2@@@@Data 3
 #+end_example
 
+**** Line Format with Custom NULL Values
 
 ~#+begin_src duckdb :format line :nullvalue "N/A" :headers on :wrap example~
 #+begin_src sql :format line :nullvalue "N/A" :headers on :wrap example
@@ -667,12 +643,12 @@ existing_value = N/A
 #+end_example
 
 ** Database Connection
-The :db header allows us to use a database file, it's the equivalent of executing the command ~duckdb <db>~, <db> being the path to the db file. In order to find the db file within your folder strcuture you can eiter put the whole path in the :db parameter or you can use ~:dir~ to first navigate to the folder where your db file lives. There's also the duckdb-cli dot command ~.cd~, which does the same thing.
+
+The :db header allows us to use a database file, it's the equivalent of executing the command ~duckdb <db>~, <db> being the path to the db file. In order to find the db file within your folder structure you can either put the whole path in the :db parameter or you can use ~:dir~ to first navigate to the folder where your db file lives. There's also the duckdb-cli dot command ~.cd~, which does the same thing.
 
 *NOTE:* if the db file is not found, it will be created.
 
 *NOTE:* duckdb can read sqlite .db files directly, meaning you can give the path to a sqlite db file and it'll work.
-
 
 ~#+begin_src duckdb :db test_database.duckdb~
 #+begin_src sql :db test_database.duckdb :wrap example
@@ -702,6 +678,7 @@ RESULTS:
 └───────┴──────────────┴─────────────────────────┘
 #+end_example
 
+More complex example:
 
 ~#+begin_src duckdb :db test_database.duckdb~
 #+begin_src sql :db test_database.duckdb :wrap example
@@ -756,11 +733,11 @@ RESULTS:
 #+end_example
 
 ** Sessions
-As you probably know, babel sessions allow us to keep state between source blocks. This can be useful for building up tables incrementally or creating multi-step analyses as if we were working on a db file.
 
+Sessions allow maintaining state between source blocks, useful for incremental analysis and multi-step workflows.
 
 ~#+begin_src duckdb :session my-session-test :results output~
-#+begin_src sql :session my-session-test :results output
+#+begin_src sql :session my-session-test :results output :wrap example
   -- First command in the session
   CREATE TEMPORARY TABLE session_test (id INTEGER, value VARCHAR);
   INSERT INTO session_test VALUES (1, 'First value');
@@ -777,9 +754,8 @@ RESULTS:
  └───────┴─────────────┘
 #+end_example
 
-
 ~#+begin_src duckdb :session my-session-test :results output~
-#+begin_src sql :session my-session-test :results output
+#+begin_src sql :session my-session-test :results output :wrap example
   -- Second command uses the same session and can access previous data
   INSERT INTO session_test VALUES (2, 'Second value');
   SELECT * FROM session_test ORDER BY id;
@@ -796,11 +772,10 @@ RESULTS:
 └───────┴──────────────┘
 #+end_example
 
-
 Sessions can also be connected to database files:
 
 ~#+begin_src duckdb :session db-session :db test_database.duckdb~
-#+begin_src sql :session db-session :db test_database.duckdb
+#+begin_src sql :session db-session :db test_database.duckdb :wrap example
   -- This session connects to a specific database file
   SELECT 'New session with database file' AS message;
 
@@ -808,8 +783,11 @@ Sessions can also be connected to database files:
   SELECT COUNT(*) AS user_count FROM users;
 #+end_src
 
-*NOTE*: The :db argument is the equivalent of doing ~duckdb some_database~, which means that DuckDb won't allow multiple processes connected to the same db file (see [[https://duckdb.org/docs/stable/connect/concurrency.html][Concurrency]]). This isn't an issue on non-session source blocks since we start and kill the duckdb process. But in the case of sessions, it wont be possible to use the same db as usual if it's being used in another session.
-Because of this, I've added a couple interactive functions to manage sessions:
+*NOTE*: The :db argument is the equivalent of doing ~duckdb some_database~, which means that DuckDB won't allow multiple processes connected to the same db file (see [[https://duckdb.org/docs/stable/connect/concurrency.html][Concurrency]]). This isn't an issue on non-session source blocks since we start and kill the duckdb process. But in the case of sessions, it wont be possible to use the same db as usual if it's being used in another session.
+
+*** Session Management Functions
+
+These interactive functions help manage DuckDB sessions:
 
 | Function                            | Description                                                                                                                               |
 |-------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------|
@@ -821,14 +799,13 @@ Because of this, I've added a couple interactive functions to manage sessions:
 DuckDB also offers some methods to avoid this deadlock, which can be read about here: [[https://duckdb.org/docs/stable/connect/concurrency.html][Concurrency]].
 
 ** Variable Substitution
-=ob-duckdb= supports using variables from the source block headers. At the
-moment variable substitution applies to strings, dollar sign variables ($var)
-and org tables.
 
-*** variable substitution
+=ob-duckdb= supports using variables from the source block headers. Variable substitution applies to strings, dollar sign variables ($var) and org tables.
+
+*** Basic variable substitution
 
 ~#+begin_src duckdb :var min_value=5 max_value=10~
-#+begin_src sql :var min_value=5 max_value=10
+#+begin_src sql :var min_value=5 max_value=10 :wrap example
   -- variable substitution
   SELECT *
   FROM generate_series(min_value, max_value) AS s(value)
@@ -852,9 +829,8 @@ Results:
 
 *** String variables
 
-
 ~#+begin_src duckdb :var name_variable="'test_name'" table_variable="'test_table'"~
-#+begin_src sql :var name_variable="'test_name'" table_variable="'test_table'"
+#+begin_src sql :var name_variable="'test_name'" table_variable="'test_table'" :wrap example
   -- String variable substitution
   SELECT 'Hello, ' || name AS greeting;
 
@@ -872,12 +848,10 @@ RESULTS:
 └───────────────────────────┘
 #+end_example
 
-
 This can quickly get confusing since at the moment the variable substitution is absolute, meaning if our variable name is ~table~, it'll replace all instances of ~table~ within the block to our value, and this applies to keywords too, meaning this:
 
-
 ~#+begin_src duckdb :var select='test_table'~
-#+begin_src sql :var select='test_table'
+#+begin_src sql :var select='test_table' :wrap example
 select 'select is being replaced here' from select;
 #+end_src
 
@@ -890,12 +864,11 @@ LINE 1: test_table 'test_table is being replaced here' from test_table...
 [ Babel evaluation exited with code 1 ]
 #+end_example
 
-Im still unsure if to simply allow for the default behaviour or try to implement some rules to the substitution.
+I'm still unsure if to simply allow for the default behavior or try to implement some rules to the substitution.
 
 *** Table lookup syntax
 
-My goto for variable substitution, a bit more orderly and allows keeping track of multiple variables since we can reuse the whole table in multiple blocks by simply using it's name in the variable header.
-
+A more organized approach to variable substitution, allowing tracking of multiple variables by reusing a whole table in multiple blocks by simply using its name in the variable header.
 
 ~#+name: lookup_table~
 #+name: lookup_table
@@ -906,9 +879,8 @@ My goto for variable substitution, a bit more orderly and allows keeping track o
 | c       | 'cranberry'            |
 | message | 'IM SCREAMING AAAAAAA' |
 
-
 ~#+begin_src duckdb :var data=lookup_table :headers on~
-#+begin_src sql :var data=lookup_table :headers on
+#+begin_src sql :var data=lookup_table :headers on :wrap example
   -- Test table lookup with the varname[key] syntax
   SELECT
     'a key refers to ' || data[a] AS a_lookup,
@@ -926,7 +898,6 @@ Results:
 └───────────────────────┴────────────────────────┴───────────────────────────┘
 #+end_example
 
-
 ~#+begin_src duckdb :var data=lookup_table :wrap example :format line~
 #+begin_src sql :var data=lookup_table :wrap example :format line
   -- Test table lookup with the varname[key] syntax
@@ -938,9 +909,9 @@ RESULTS:
 IMPORTANT_MESSAGE = IM SCREAMING AAAAAAA
 #+end_example
 
+*** Advanced substitution examples
 
-*** Some fun subtitution possiblities
-**** queries as variables
+**** Queries as variables
 
 ~#+name: var_table_name~
 #+name: var_table_name
@@ -950,13 +921,12 @@ IMPORTANT_MESSAGE = IM SCREAMING AAAAAAA
 | query2     | select unnest(#1) from |
 | table_name | some_table             |
 
-
 #+begin_src text
 +HEADER: :var var_table=var_table_name
 +begin_src duckdb
 #+end_src
 #+HEADER: :var var_table=var_table_name
-#+begin_src sql
+#+begin_src sql :wrap example
 .echo on
 var_table[query2]( var_table[query1] as var_table[table_name] );
 #+end_src
@@ -978,7 +948,7 @@ select unnest(#1) from( select [ 1,2,3,4,5,6 ] as some_table );
 .exit
 #+end_example
 
-**** substituion can also apply to variables depending on header order
+**** Substitution applying to variables based on header order
 
 #+begin_src text
 +HEADER: :var commands="output_format"
@@ -1002,7 +972,101 @@ some_column
 Run Time (s): real 0.000 user 0.000172 sys 0.000115
 #+end_example
 
+** Execution History
+
+The block tracking system maintains a history of all DuckDB block executions, allowing you to revisit previous analyses and track changes over time.
+
+After executing a block:
+
+#+begin_src org
+    #+begin_src duckdb
+    SELECT 1 AS test;
+    #+end_src
+#+end_src
+
+It gets assigned block and execution IDs:
+
+#+begin_src org
+#+PROPERTY: EXEC_ID 91aac778-0bc2-4686-9a5e-4ef002266d40
+#+PROPERTY: ID 3a80d690-1556-42f0-aaf4-a18ad4dfe10f
+#+begin_src duckdb
+  SELECT 1 AS test;
+#+end_src
+#+end_src
+
+#+RESULTS:
+#+begin_results
+┌───────┐
+│ test  │
+│ int32 │
+├───────┤
+│     1 │
+└───────┘
+#+end_results
+
+*** Execution History Commands
+
+These commands help navigate and explore your DuckDB execution history:
+
+| Command                               | Description                                             |
+|---------------------------------------|---------------------------------------------------------|
+| `org-duckdb-blocks-list`             | Show all tracked blocks and their execution history     |
+| `org-duckdb-blocks-recent`           | Show recent executions chronologically                  |
+| `org-duckdb-blocks-navigate-recent`  | Navigate to recent executions with completion           |
+| `org-duckdb-blocks-goto-block`       | Jump to a specific block by ID                          |
+| `org-duckdb-blocks-goto-execution`   | Jump to a specific execution by ID                      |
+| `org-duckdb-blocks-execution-info`   | Display detailed information about a specific execution |
+
+*** Example of execution history
+
+When you execute `org-duckdb-blocks-list`, you'll see a display like:
+
+#+begin_src text
+
+
+DuckDB Blocks and Executions
+==========================
+
+Block ID: 3a80d690-1556-42f0-aaf4-a18ad4dfe10f
+  File: /path/to/file.org
+  Buffer: file.org
+  Source block: 796-846
+  Executions (2 total):
+    35c31cfa-c974-47d0-bc02-6afcddca0a55 (2025-04-15 12:09:20.768) :headers on :results drawer :format table
+    91aac778-0bc2-4686-9a5e-4ef002266d40 (2025-04-15 12:04:10.041)
+#+end_src
+
+For a specific execution (`org-duckdb-blocks-execution-info`):
+
+#+begin_src
+DuckDB Execution: 35c31cfa-c974-47d0-bc02-6afcddca0a55
+==========================
+
+Block ID: 3a80d690-1556-42f0-aaf4-a18ad4dfe10f
+File: /path/to/file.org
+Buffer: file.org
+
+Execution Time: 2025-04-15 12:09:20.768
+
+=== SOURCE BLOCK STATE ===
+Parameters: :headers on :results drawer :format table
+Line Count: 4
+
+=== CONTENT ===
+  SELECT 1 AS test;
+  SELECT 0 AS test;
+  SELECT 3 AS test;
+  SELECT 2 AS test;
+#+end_src
+
+This history functionality is particularly useful for:
+- Tracking the evolution of your analyses
+- Reproducing previous results
+- Understanding changes in queries over time
+- Navigating complex documents with many DuckDB blocks
+
 ** More Examples
+
 *** Data Types
 DuckDB supports a variety of data types, including complex ones:
 
@@ -1041,7 +1105,6 @@ RESULTS:
 └────────────────────────────────────────────────────────────────────────┘
 #+end_example
 
-
 ~#+begin_src duckdb :headers on :results drawer :session data_types_example :format box :wrap example~
 #+begin_src sql :headers on :results drawer :session data_types_example :format box :wrap example
 DESCRIBE data_types_table;
@@ -1069,7 +1132,6 @@ RESULTS:
 └───────────────┴──────────────────────────────┴──────┴──────┴─────────┴───────┘
 #+end_example
 
-
 ~#+begin_src duckdb :headers on :results drawer :session data_types_example :format box :wrap example~
 #+begin_src sql :headers on :results drawer :session data_types_example :format box :wrap example
 --table was too wide so we can transpose by doing this
@@ -1077,6 +1139,7 @@ UNPIVOT (SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (
     SELECT * FROM data_types_table
 )) AS t ON COLUMNS(*) INTO NAME col_name VALUE col_value;
 #+end_src
+
 RESULTS:
 #+begin_example
 ┌───────────────┬──────────────────────┐
@@ -1099,12 +1162,10 @@ RESULTS:
 └───────────────┴──────────────────────┘
 #+end_example
 
-
 *** Window Functions
 
-
 ~#+begin_src duckdb :headers on~
-#+begin_src sql :headers on
+#+begin_src sql :headers on :wrap example
   -- Window functions
   WITH sales AS (
     SELECT * FROM (VALUES
@@ -1130,9 +1191,7 @@ RESULTS:
   ORDER BY region, amount DESC;
 #+end_src
 
-
 Results:
-
 #+begin_example
 ┌─────────┬────────┬──────────────┬────────────┬────────────────┬─────────────┐
 │ region  │ amount │ region_total │ region_avg │ rank_in_region │ grand_total │
@@ -1151,9 +1210,8 @@ Results:
 
 *** Recursive CTE for Hierarchical Data
 
-
 ~#+begin_src duckdb :headers on :format table~
-#+begin_src sql :headers on :format table
+#+begin_src sql :headers on :format table :wrap example
   -- Recursive CTE for hierarchical data
   WITH RECURSIVE hierarchy AS (
     -- Base case: get root nodes (nodes with no parent)
@@ -1184,9 +1242,7 @@ Results:
     id;
 #+end_src
 
-
 Results:
-
 #+begin_example
 +----+-------------------------+-----------+
 | id |    hierarchical_name    | parent_id |
@@ -1201,7 +1257,6 @@ Results:
 #+end_example
 
 *** JSON Processing
-
 
 ~#+begin_src duckdb :headers on :wrap example~
 #+begin_src sql :headers on :wrap example
@@ -1244,8 +1299,8 @@ RESULTS:
 #+end_example
 
 *** Using Prologue and Epilogue
-The =:prologue= and =:epilogue= header arguments let you execute SQL
-before and after the main body:
+
+The =:prologue= and =:epilogue= header arguments let you execute SQL before and after the main body:
 
 #+begin_src text
 +HEADER: :results drawer
@@ -1256,7 +1311,7 @@ before and after the main body:
 #+HEADER: :results drawer
 #+HEADER: :prologue "CREATE TEMP TABLE test_prologue(id INTEGER);\nINSERT INTO test_prologue VALUES (1), (2), (3);"
 #+HEADER: :epilogue "DROP TABLE test_prologue;"
-#+begin_src sql
+#+begin_src sql :wrap example
   -- The prologue creates a table and inserts data before this query runs
   SELECT * FROM test_prologue;
   -- The epilogue will clean up after
@@ -1275,6 +1330,7 @@ Results:
 #+end_example
 
 *** Special Characters and Quotes
+
 #+begin_src text
 +HEADER: :prologue UNPIVOT (SELECT CAST(COLUMNS(*) AS VARCHAR) FROM (
 +HEADER: :epilogue )) AS t ON COLUMNS(*) INTO NAME col_name VALUE col_value;
@@ -1310,7 +1366,6 @@ RESULTS:
 ** IN PROGRESS - using full org table as data source
 Querying directly from an org table is not yet supported.
 
-
 ~#+name: complex_data~
 #+name: complex_data
 | first | last  | age | city        |
@@ -1319,9 +1374,8 @@ Querying directly from an org table is not yet supported.
 | Jane  | Smith |  28 | Los Angeles |
 | Bob   | Brown |  42 | Chicago     |
 
-
 ~#+begin_src duckdb :var people=complex_data :headers on~
-#+begin_src sql :var people=complex_data :headers on
+#+begin_src sql :var people=complex_data :headers on :wrap example
   -- Complex table manipulation
   WITH people_data AS (
     SELECT first, last, age, city FROM people
@@ -1344,11 +1398,20 @@ Looking into being able to set variable type in the header arguments, not sure i
 
 * Troubleshooting
 ** Common Issues
-1. *DuckDB not found*: Ensure DuckDB CLI is installed and in your PATH, you should be able to call duckdb from your shell by doing ~duckdb~.
-2. *Session not working*: Make sure session names are consistent, you can also use ~org-babel-duckdb-display-sessions~ to check running duckdb sessions.
-3. *Installation*: Im on doom emacs so I'm not entirely sure if there will be issues installing on vanilla or other frameworks, let me know.
+1. *DuckDB not found*: Ensure DuckDB CLI is installed and in your PATH. You should be able to call duckdb from your shell by doing ~duckdb~.
+
+2. *Session not working*: Make sure session names are consistent. You can use ~org-babel-duckdb-display-sessions~ to check running duckdb sessions.
+
+3. *Asynchronous execution errors*: Async execution requires a session. Ensure you've included both `:session name` and `:async yes` in your header arguments.
+
+4. *Large query output issues*: For very large query results, use `:output buffer` to display results in a separate buffer.
+
+5. *Block tracking problems*: If block tracking seems inconsistent, try using `org-duckdb-blocks-list` to view all tracked blocks and their current status.
+
+6. *Installation*: I'm on doom emacs so I'm not entirely sure if there will be issues installing on vanilla or other frameworks, let me know.
+
 * Contributing
-Contributions, bug reports, and feature requests are more than welcome, this is the first time I've done a package so I'm expecting issues to arrive or there might be some obvious optimizations that I missed, I've tried to document the code as best as possible but feel free to:
+Contributions, bug reports, and feature requests are more than welcome. This is the first time I've done a package so I'm expecting issues to arrive or there might be some obvious optimizations that I missed. I've tried to document the code as best as possible but feel free to:
 
 1. Open issues for bug reports or feature requests
 2. Submit pull requests with improvements
