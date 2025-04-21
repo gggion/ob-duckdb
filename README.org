@@ -303,6 +303,7 @@ Results:
 
 For long-running queries, you can use asynchronous execution to avoid blocking Emacs:
 
+~#+begin_src duckdb :async yes :session test :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'~
 #+begin_src duckdb :async yes :session test :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'
 SELECT * FROM read_parquet('parquet_url') WHERE id < 10
 #+end_src
