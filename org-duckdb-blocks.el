@@ -181,7 +181,7 @@ the source block, searching back a limited distance to find existing ones."
       (if (re-search-backward "^#\\+PROPERTY: ID " (max (- begin 200) (point-min)) t)
           (progn
             (beginning-of-line)
-            (kill-line)
+            (delete-region (point) (line-end-position))
             (insert (format "#+PROPERTY: ID %s" block-id)))
         (goto-char begin)
         (forward-line -1)
@@ -193,7 +193,7 @@ the source block, searching back a limited distance to find existing ones."
       (if (re-search-backward "^#\\+PROPERTY: EXEC_ID " (max (- begin 200) (point-min)) t)
           (progn
             (beginning-of-line)
-            (kill-line)
+            (delete-region (point) (line-end-position))
             (insert (format "#+PROPERTY: EXEC_ID %s" exec-id)))
         (goto-char begin)
         (forward-line -1)
