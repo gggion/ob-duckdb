@@ -85,6 +85,7 @@ displayed with its original structure and any colorization intact.")
     (echo      . :any)  ; Echo commands
     (bail      . :any)  ; Exit on error
     (async     . :any)  ; Execute asynchronously
+    (md_token  . :any)  ; Pass in motherduck_token
     (output    . :any)) ; Output handling (e.g., "buffer")
   "DuckDB-specific header arguments.
 These header arguments control how DuckDB executes queries and formats results:
@@ -98,6 +99,7 @@ separator: Column separator for output
 echo:      Echo commands being executed (on/off)
 bail:      Exit on error (on/off)
 async:     Execute asynchronously (yes/no)
+md_token:  Motherduck token
 output:    Control result display (\"buffer\" for dedicated output)")
 
 ;;; Customization Options
@@ -416,6 +418,7 @@ directives are properly translated to DuckDB's native configuration system."
         (nullvalue (cdr (assq :nullvalue params)))
         (separator (cdr (assq :separator params)))
         (echo (cdr (assq :echo params)))
+        (md_token (cdr (assq :md_token params)))
         (bail (cdr (assq :bail params))))
 
     ;; Use with-temp-buffer for string building which benchmarks showed was fastest
@@ -429,6 +432,7 @@ directives are properly translated to DuckDB's native configuration system."
       (when headers   (insert (format ".headers %s\n"   (if (string= headers "off") "off" "on"))))
       (when echo      (insert (format ".echo %s\n"      (if (string= echo    "off") "off" "on"))))
       (when bail      (insert (format ".bail %s\n"      (if (string= bail    "off") "off" "on"))))
+      (when md_token  (setenv "motherduck_token" md_token))
 
       ;; Return the buffer contents if we added any commands
       (when (> (buffer-size) 0)
