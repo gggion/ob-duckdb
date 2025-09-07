@@ -406,7 +406,6 @@ Converts header arguments to their corresponding DuckDB configuration commands:
 - :separator → .separator (column delimiter)
 - :echo → .echo (command echo)
 - :bail → .bail (error handling)
-- :use → USE use;
 - :md_token → (setenv motherduck_token md_token)
 
 Returns a string of newline-separated dot commands to configure DuckDB.
@@ -421,7 +420,6 @@ directives are properly translated to DuckDB's native configuration system."
         (separator (cdr (assq :separator params)))
         (echo (cdr (assq :echo params)))
         (bail (cdr (assq :bail params)))
-        (use (cdr (assq :use params)))
         (md_token (cdr (assq :md_token params))))
 
     (when md_token  (setenv "motherduck_token" md_token))
@@ -437,7 +435,6 @@ directives are properly translated to DuckDB's native configuration system."
       (when headers   (insert (format ".headers %s\n"   (if (string= headers "off") "off" "on"))))
       (when echo      (insert (format ".echo %s\n"      (if (string= echo    "off") "off" "on"))))
       (when bail      (insert (format ".bail %s\n"      (if (string= bail    "off") "off" "on"))))
-      (when use       (insert (format "USE %s;\n"      use))
 
       ;; Return the buffer contents if we added any commands
       (when (> (buffer-size) 0)

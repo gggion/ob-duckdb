@@ -171,6 +171,7 @@ RESULTS:
 | =:output=    | Output handling                                  | =:output buffer=        |                        |
 | =:prologue=  | SQL to execute before the main body              | =:prologue "CREATE..."= |                        |
 | =:epilogue=  | SQL to execute after the main body               | =:epilogue "DROP..."=   |                        |
+| =:md_token=  | Motherduck token                                 | =:md_token "eyJhb..."=  |                        |
 
 *** Format Examples
 **** Markdown format
