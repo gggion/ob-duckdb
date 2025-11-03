@@ -101,6 +101,10 @@ async:     Execute asynchronously (yes/no)
 output:    Control result display (\"buffer\" for dedicated output)")
 
 ;;; Customization Options
+(defgroup org-babel-duckdb nil
+  "Org Babel support for DuckDB."
+  :group 'org-babel
+  :prefix "org-babel-duckdb-")
 
 (defcustom org-babel-duckdb-command "duckdb"
   "Command used to execute DuckDB.
@@ -112,7 +116,7 @@ The command is used as the basis for both direct command-line invocation
 and for establishing interactive sessions. Any arguments included here
 will be applied to all DuckDB processes created by this package."
   :type 'string
-  :group 'org-babel)
+  :group 'org-babel-duckdb)
 
 (defcustom org-babel-duckdb-output-buffer "*DuckDB-output*"
   "Buffer name for displaying DuckDB query results.
@@ -123,7 +127,7 @@ The buffer provides a non-intrusive way to view large result sets
 without cluttering the Org document, and is particularly useful
 for exploring data or debugging queries."
   :type 'string
-  :group 'org-babel)
+  :group 'org-babel-duckdb)
 
 (defcustom org-babel-duckdb-prompt-char "🦆"
   "Character or string used as the DuckDB prompt in org-babel sessions.
@@ -141,7 +145,14 @@ Examples of good prompt characters:
 CAUTION: Avoid using characters or symbols that might appear in your data
 or query results to prevent unintended text removal."
   :type 'string
-  :group 'org-babel)
+  :group 'org-babel-duckdb)
+
+;; TODO: finish documenting this option
+(defcustom org-babel-duckdb-show-progress t
+  "Whether to show progress indicators during async execution."
+  :type 'boolean
+  :group 'org-babel-duckdb)
+
 
 ;;; Session Management
 
@@ -401,6 +412,7 @@ be cleaned up automatically according to Org's file handling rules."
       (insert body))
     temp-file))
 
+;; TODO: finish documenting this function
 (defun org-babel-duckdb-clean-output (output)
 "Remove prompt characters from first line of OUTPUT."
 (if (string-empty-p output)
