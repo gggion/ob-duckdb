@@ -402,58 +402,16 @@ be cleaned up automatically according to Org's file handling rules."
     temp-file))
 
 (defun org-babel-duckdb-clean-output (output)
-  "Clean DuckDB output by removing all prompt characters and other artifacts.
-Processes raw DuckDB OUTPUT to remove:
-- All instances of `org-babel-duckdb-prompt-char`
-- Marker lines and status messages
-- Process termination messages
-- Excess whitespace
-
-This function normalizes DuckDB's raw terminal output into a form
-suitable for inclusion in Org documents. It handles both interactive
-session output and command-line execution results, removing various
-artifacts that would otherwise clutter the displayed results."
-  (let* ((prompt-char (regexp-quote org-babel-duckdb-prompt-char))
-         ;; Pass 1: Remove marker lines as a group
-         (cleaned-output
-          (replace-regexp-in-string
-           (rx bol
-               (or "DUCKDB_START_" "DUCKDB_END_" "DUCKDB_QUERY_COMPLETE"
-                   "ORG_TABLE_FORMAT_START" "ORG_TABLE_FORMAT_END"
-                   "Process duckdb finished")
-               (0+ not-newline)
-               eol)
-           "" output))
-
-         ;; Pass 2: Handle file instructions and config lines
-         (cleaned-output
-          (replace-regexp-in-string
-           (rx (or (seq bol "Use \".open FILENAME\"" (0+ not-newline) "\n")
-                   (seq bol (0+ space)
-                        (or "echo:" "headers:" "mode:")
-                        (0+ not-newline) "\n")))
-           "" cleaned-output)))
-
-    ;; Pass 3: Remove prompt characters
-    (setq cleaned-output (replace-regexp-in-string prompt-char "" cleaned-output))
-
-    ;; Pass 4: Handle progress bars
-    (setq cleaned-output (replace-regexp-in-string
-                         (rx bol (0+ any) (1+ digit) "% ▕" (0+ any) "▏" (0+ any) eol)
-                         ""
-                         cleaned-output))
-
-    ;; Pass 5: Clean up whitespace (grouped as one pass)
-    (setq cleaned-output
-          (replace-regexp-in-string
-           (rx (or (seq bol (+ "\n"))          ; Leading newlines
-                   (seq (+ "\n") eol)          ; Trailing newlines
-                   (seq "\n" (+ "\n"))))       ; Multiple consecutive newlines
-           (lambda (match)
-             (if (string-match-p "\n\n" match) "\n\n" ""))
-           cleaned-output))
-
-    (string-trim cleaned-output)))
+"Remove prompt characters from first line of OUTPUT."
+(if (string-empty-p output)
+        output
+(let ((prompt-char (regexp-quote org-babel-duckdb-prompt-char))
+        (newline-pos (string-search "\n" output)))
+        (if newline-pos
+        (let ((first-line (substring output 0 newline-pos))
+                (rest (substring output newline-pos)))
+        (concat (replace-regexp-in-string prompt-char "" first-line) rest))
+        (replace-regexp-in-string prompt-char "" output)))))
 
 ;;; Session Management
 
