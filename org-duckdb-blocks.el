@@ -54,6 +54,7 @@
 ;;
 ;; The block tracking occurs automatically via advice on `org-babel-execute-src-block',
 ;; capturing information whenever a DuckDB block is executed.
+;; TODO: there's a lot of WHAT, not enough WHY in the docstrings
 
 ;;; Code:
 
@@ -122,6 +123,11 @@ has been completely filled.")
 This limits the size of the circular buffer to prevent unbounded growth
 while still providing convenient access to recent execution history.")
 
+(defvar org-duckdb-blocks-execution-status (make-hash-table :test 'equal)
+  "Hash table tracking execution status by execution ID.
+Maps exec-id to status symbols:
+        `running', `completed', `cancelled', `error', `warning'.")
+
 ;;; Core Utility Functions
 
 (defun org-duckdb-blocks-add-to-history (exec-id block-id timestamp)
@@ -159,6 +165,40 @@ the full executions hash table."
       (let* ((idx (mod (- start-idx i) org-duckdb-blocks-history-capacity))
              (entry (aref org-duckdb-blocks-history-vector idx)))
         (when entry (push entry result))))))
+
+;; TODO finish documenting `org-duckdb-blocks-update-execution-status'
+(defun org-duckdb-blocks-update-execution-status (exec-id status &optional error-info)
+  "Update execution STATUS for EXEC-ID with optional ERROR-INFO."
+  (let ((exec-id (org-duckdb-blocks-normalize-id exec-id)))
+    (puthash exec-id status org-duckdb-blocks-execution-status)
+    (when-let ((exec-info (gethash exec-id org-duckdb-blocks-executions)))
+      (puthash exec-id
+               (plist-put exec-info :status status)
+               org-duckdb-blocks-executions)
+      (when error-info
+        (puthash exec-id
+                 (plist-put (gethash exec-id org-duckdb-blocks-executions)
+                           :error-info error-info)
+                 org-duckdb-blocks-executions)))))
+
+;; TODO finish documenting `org-duckdb-blocks-get-execution-status'
+(defun org-duckdb-blocks-get-execution-status (exec-id)
+  "Get current status for EXEC-ID."
+  (gethash (org-duckdb-blocks-normalize-id exec-id) org-duckdb-blocks-execution-status))
+
+;; TODO finish documenting `org-duckdb-blocks-get-latest-exec-id-for-block'
+(defun org-duckdb-blocks-get-latest-exec-id-for-block (begin)
+  "Get the most recent execution ID for block at BEGIN position."
+  (let ((latest-exec-id nil)
+        (latest-time nil))
+    (maphash (lambda (exec-id exec-info)
+               (when (= (plist-get exec-info :begin) begin)
+                 (let ((exec-time (plist-get exec-info :time)))
+                   (when (or (not latest-time) (time-less-p latest-time exec-time))
+                     (setq latest-time exec-time
+                           latest-exec-id exec-id)))))
+             org-duckdb-blocks-executions)
+    latest-exec-id))
 
 ;;; Property Management
 
@@ -552,6 +592,7 @@ called once during initialization."
     (advice-add 'org-babel-execute-src-block :before #'org-duckdb-blocks-register-advice)
     (message "DuckDB block tracking activated")))
 
+;; TODO improve documentation for `org-duckdb-blocks-clear'
 (defun org-duckdb-blocks-clear ()
   "Reset all DuckDB block tracking data structures.
 Clears the registry, execution history, and circular buffer.
@@ -560,6 +601,7 @@ Note that this does not remove ID properties from source blocks."
   (interactive)
   (clrhash org-duckdb-blocks-registry)
   (clrhash org-duckdb-blocks-executions)
+  (clrhash org-duckdb-blocks-execution-status) ; NEW
   (setq org-duckdb-blocks-history-vector (make-vector org-duckdb-blocks-history-capacity nil)
         org-duckdb-blocks-history-index 0
         org-duckdb-blocks-history-count 0)
@@ -628,6 +670,31 @@ Default limit is 10 executions per block."
            (princ "\n"))
          org-duckdb-blocks-registry)))))
 
+;; TODO finish documenting `org-duckdb-blocks-store-process'
+(defun org-duckdb-blocks-store-process (exec-id process)
+  "Store PROCESS reference for EXEC-ID in execution info."
+  (when-let ((exec-info (gethash exec-id org-duckdb-blocks-executions)))
+    (puthash exec-id
+             (plist-put exec-info :process process)
+             org-duckdb-blocks-executions)))
+
+;; TODO finish documenting `org-duckdb-blocks-get-process'
+(defun org-duckdb-blocks-get-process (exec-id)
+  "Get process for EXEC-ID, or nil if not found or not running."
+  (when-let ((exec-info (gethash exec-id org-duckdb-blocks-executions)))
+    (plist-get exec-info :process)))
+
+;; TODO finish documenting `org-duckdb-blocks-get-running-executions'
+(defun org-duckdb-blocks-get-running-executions ()
+  "Return list of exec-ids currently in `running' status."
+  (let (running)
+    (maphash (lambda (exec-id exec-info)
+               (when (eq (plist-get exec-info :status) 'running)
+                 (push exec-id running)))
+             org-duckdb-blocks-executions)
+    running))
+
+
 (defun org-duckdb-blocks-recent (&optional limit)
   "Display recent DuckDB executions chronologically, up to LIMIT entries.
 Shows a chronological list of recent executions from newest to oldest.
@@ -672,6 +739,36 @@ Default limit is 10 executions."
                                           (min 60 (length (format "%S" header)))))))
 
               (princ "\n"))))))))
+
+;; TODO finish documenting `org-duckdb-blocks-show-execution-status'
+(defun org-duckdb-blocks-show-execution-status ()
+  "Show status of all recent executions with their states."
+  (interactive)
+  (with-help-window "*DuckDB Execution Status*"
+    (princ "DuckDB Execution Status\n")
+    (princ "======================\n\n")
+
+    (princ "RECENT EXECUTIONS:\n")
+    (let ((recent (org-duckdb-blocks-get-recent-history 15)))
+      (if (not recent)
+          (princ "  None\n")
+        (dolist (entry recent)
+          (let* ((exec-id (aref entry 0))
+                 (block-id (aref entry 1))
+                 (timestamp (aref entry 2))
+                 (exec-info (gethash exec-id org-duckdb-blocks-executions))
+                 (status (plist-get exec-info :status))
+                 (error-info (plist-get exec-info :error-info))
+                 (time-str (format-time-string "%H:%M:%S" timestamp)))
+            (princ (format "  [%s] %s: %s\n"
+                           time-str
+                           (substring exec-id 0 12)
+                           (or status "unknown")))
+            (when error-info
+              (princ (format "           Error: %s\n"
+                             (if (> (length error-info) 60)
+                                 (concat (substring error-info 0 57) "...")
+                               error-info))))))))))
 
 (provide 'org-duckdb-blocks)
 
