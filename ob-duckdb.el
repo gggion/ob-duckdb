@@ -268,58 +268,6 @@ available throughout a session's lifetime."
                (org-babel-duckdb-var-to-duckdb (cdr pair))))
      vars)))
 
-(defun org-babel-duckdb-insert-org-table-markers (body)
-  "Insert markers around org-table mode sections in BODY.
-This processes all `.mode org-table` directives, replacing them with
-`.mode markdown` and adding special marker strings around the section.
-
-The transformation creates a virtual format that doesn't exist in DuckDB
-itself but provides seamless integration with Org mode tables. The output
-is later post-processed to transform marked sections into proper Org tables.
-
-The function identifies all occurrences of `.mode org-table` directives and:
-1. Inserts an \"ORG_TABLE_FORMAT_START\" marker before the section
-2. Changes the directive to use Markdown format internally
-3. Tracks mode changes to properly terminate table sections
-4. Inserts an \"ORG_TABLE_FORMAT_END\" marker when section ends
-
-Returns the modified body string with all directives and markers in place."
-  ;; Quick check if processing is needed at all
-  (if (not (string-match-p "\\.mode\\s-+org-table" body))
-      body ; No org-table directives, return unchanged
-
-    (let ((lines (split-string body "\n"))
-          (result-lines nil)
-          (has-org-table nil))
-
-      ;; Process each line and collect transformed lines
-      (dolist (line lines)
-        (cond
-         ;; Found .mode org-table
-         ((string-match-p "^\\s-*\\.mode\\s-+org-table\\s-*$" line)
-          (setq has-org-table t)
-          (push ".print \"ORG_TABLE_FORMAT_START\"" result-lines)
-          (push ".mode markdown" result-lines))
-
-         ;; Found different .mode directive after we've seen org-table
-         ((and has-org-table
-               (string-match-p "^\\s-*\\.mode\\s-+" line)
-               (not (string-match-p "^\\s-*\\.mode\\s-+org-table\\s-*$" line)))
-          (push ".print \"ORG_TABLE_FORMAT_END\"" result-lines)
-          (push line result-lines)
-          (setq has-org-table nil))
-
-         ;; Any other line
-         (t
-          (push line result-lines))))
-
-      ;; Add trailing end marker if needed
-      (when has-org-table
-        (push ".print \"ORG_TABLE_FORMAT_END\"" result-lines))
-
-      ;; Join all lines with a single operation
-      (mapconcat #'identity (nreverse result-lines) "\n"))))
-
 (defun org-babel-expand-body:duckdb (body params)
   "Expand BODY with variables from PARAMS.
 This performs three types of variable substitution:
@@ -507,99 +455,6 @@ artifacts that would otherwise clutter the displayed results."
 
     (string-trim cleaned-output)))
 
-(defun org-babel-duckdb-transform-table-section (text)
-  "Transform markdown tables in TEXT into org table format.
-Converts DuckDB-generated Markdown tables into proper Org tables
-by modifying the table structure for compatibility:
-
-1. Identifies separator lines in the markdown table
-2. Replaces pipe characters (|) with plus signs (+) in separator lines
-3. Removes alignment colons from separator lines
-4. Preserves all other table formatting
-
-This creates tables that render correctly in Org mode and
-can be manipulated with Org's table editing commands.
-
-TEXT is a string containing markdown-formatted table output.
-Returns a string with the transformed table in Org format."
-  (let* ((lines (split-string text "\n"))
-         (transformed-lines
-          (mapcar
-           (lambda (line)
-             (if (string-match "^\\([ \t]*[|]\\)\\([-|: \t]+\\)\\([|][ \t]*\\)$" line)
-                 ;; This is a separator line
-                 (let ((prefix (match-string 1 line))
-                       (middle (match-string 2 line))
-                       (suffix (match-string 3 line)))
-                   (concat
-                    prefix
-                    ;; Replace pipes with plus AND remove colons
-                    (replace-regexp-in-string
-                     ":" "-"
-                     (replace-regexp-in-string "|" "+" middle))
-                    suffix))
-               ;; Not a separator - keep as is
-               line))
-           lines)))
-
-    ;; Join with newlines in one operation
-    (mapconcat #'identity transformed-lines "\n")))
-
-(defun org-babel-duckdb-transform-output (output)
-  "Transform DuckDB OUTPUT by converting markdown tables to org tables.
-Post-processes the raw output from DuckDB to convert specially marked sections
-into proper Org tables. This works in tandem with the virtual `.mode org-table`
-directive implemented by `org-babel-duckdb-insert-org-table-markers`.
-
-The function:
-1. Searches for special marker strings:
-   - (\"ORG_TABLE_FORMAT_START\" and \"ORG_TABLE_FORMAT_END\")
-2. Leaves non-marked sections unchanged
-3. Processes marked sections through `org-babel-duckdb-transform-table-section`
-4. Reconstructs the output with properly formatted Org tables
-
-This allows users to get native Org tables directly from DuckDB queries
-without manual reformatting or additional post-processing steps.
-
-Returns the transformed output with all marked sections converted to Org tables."
-  ;; Quick check if transformation is needed
-  (if (not (string-match-p "ORG_TABLE_FORMAT_START" output))
-      output  ;; No markers, return unchanged
-
-    (let ((result "")
-          (pos 0)
-          (in-section nil))
-
-      ;; Process the output string in chunks
-      (while (string-match "ORG_TABLE_FORMAT_\\(START\\|END\\)" output pos)
-        (let* ((match-pos (match-beginning 0))
-               (marker-type (match-string 1 output))
-               (non-marker-text (substring output pos match-pos))
-               (end-marker-pos (+ match-pos (length (match-string 0 output)))))
-
-          ;; Add text before the marker
-          (setq result
-                (concat result
-                        (if in-section
-                            ;; Process table separator lines
-                            (org-babel-duckdb-transform-table-section non-marker-text)
-                          ;; Regular text
-                          non-marker-text)))
-
-          ;; Update position and section state
-          (setq pos end-marker-pos)
-          (setq in-section (string= marker-type "START"))))
-
-      ;; Add any remaining text after the last marker
-      (setq result
-            (concat result
-                    (if in-section
-                        ;; This would be a format error (missing END), but handle anyway
-                        (org-babel-duckdb-transform-table-section (substring output pos))
-                      (substring output pos))))
-
-      result)))
-
 ;;; Session Management
 
 (defun org-babel-duckdb-initiate-session (&optional session-name params)
@@ -614,7 +469,7 @@ This function establishes a persistent DuckDB process that:
 
 If a session with the given name already exists and its process is
 alive, that session is reused. Otherwise, a new session is created.
-The 'default' session is used when SESSION-NAME is 'yes' or nil."
+The `default' session is used when SESSION-NAME is `yes' or nil."
   (unless (string= session-name "none")
     (let* ((session-name (if (or (null session-name) (string= session-name "yes"))
                             "default" session-name))
@@ -922,7 +777,6 @@ Returns the processed output string for potential further use."
 
   ;; Process the raw output
   (let* ((cleaned-output (org-babel-duckdb-clean-output raw-output))
-         (transformed-output (org-babel-duckdb-transform-output cleaned-output))
          (output-type (cdr (assq :output params)))
          (use-buffer-output (and output-type (string= output-type "buffer"))))
 
@@ -951,7 +805,7 @@ Returns the processed output string for potential further use."
                     (progn
                       (org-babel-remove-result)
                       (org-babel-insert-result "Output sent to buffer." effective-params)
-                      (org-babel-duckdb-display-buffer transformed-output))
+                      (org-babel-duckdb-display-buffer cleaned-output))
 
                   ;; Normal output in source block
                   (progn
@@ -961,11 +815,11 @@ Returns the processed output string for potential further use."
                             (cons (cons :wrap wrap) effective-params)))
 
                     ;; Process result for ANSI colors
-                    (when (and (stringp transformed-output) (string-match-p "\e\\[" transformed-output))
+                    (when (and (stringp cleaned-output) (string-match-p "\e\\[" cleaned-output))
                       (with-temp-buffer
-                        (insert transformed-output)
+                        (insert cleaned-output)
                         (ansi-color-apply-on-region (point-min) (point-max))
-                        (setq transformed-output (buffer-string))))
+                        (setq cleaned-output (buffer-string))))
 
                     ;; Insert the result
                     (condition-case err
@@ -973,8 +827,8 @@ Returns the processed output string for potential further use."
                           (org-babel-remove-result)
                           (org-babel-insert-result
                            (if (member "table" result-params)
-                               (org-babel-duckdb-table-or-scalar transformed-output)
-                             transformed-output)
+                               (org-babel-duckdb-table-or-scalar cleaned-output)
+                             cleaned-output)
                            effective-params)
 
                           ;; Process ANSI colors in the result region
@@ -989,7 +843,7 @@ Returns the processed output string for potential further use."
                        (message "[ob-duckdb] Error updating result: %S" err)))))))))))
 
     ;; Return the processed output for potential further use
-    transformed-output))
+    cleaned-output))
 
 (defun org-babel-duckdb-table-or-scalar (result)
   "Convert RESULT into an appropriate Elisp value for Org table.
@@ -1244,7 +1098,7 @@ Returns the execution results formatted according to PARAMS[:result-params]."
              (combined-body (if dot-commands
                                 (concat dot-commands "\n" expanded-body)
                               expanded-body))
-             (marked-body (org-babel-duckdb-insert-org-table-markers combined-body)))
+             (final-body combined-body ))
 
         ;; Execute differently based on sync/async
         (if use-async
@@ -1260,11 +1114,11 @@ Returns the execution results formatted according to PARAMS[:result-params]."
                 (setq org-babel-duckdb-last-registration nil)
 
                 ;; Execute asynchronously - it handles placeholder directly
-                (org-babel-duckdb-execute-async session marked-body params block-id exec-id)
+                (org-babel-duckdb-execute-async session final-body params block-id exec-id)
                 "Executing asynchronously..."))
 
           ;; Execute synchronously
-          (let* ((raw-result (org-babel-duckdb-execute-sync session marked-body params))
+          (let* ((raw-result (org-babel-duckdb-execute-sync session final-body params))
                  (block-id nil)
                  (exec-id nil))
 
@@ -1281,20 +1135,19 @@ Returns the execution results formatted according to PARAMS[:result-params]."
 
               ;; Otherwise (non-tracked execution), process directly and return
               (let* ((cleaned-output (org-babel-duckdb-clean-output raw-result))
-                     (transformed-output (org-babel-duckdb-transform-output cleaned-output))
                      (output-type (cdr (assq :output params)))
                      (use-buffer-output (and output-type (string= output-type "buffer"))))
 
                 ;; Handle output to buffer if requested
                 (if use-buffer-output
                     (progn
-                      (org-babel-duckdb-display-buffer transformed-output)
+                      (org-babel-duckdb-display-buffer cleaned-output)
                       "Output sent to buffer.")
 
                   ;; Return appropriately processed results
                   (if (member "table" result-params)
-                      (org-babel-duckdb-table-or-scalar transformed-output)
-                    transformed-output))))))))))
+                      (org-babel-duckdb-table-or-scalar cleaned-output)
+                    cleaned-output))))))))))
 
 ;;; Language Integration
 
