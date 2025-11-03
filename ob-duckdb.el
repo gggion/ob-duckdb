@@ -176,6 +176,7 @@ results back to the originating block.
 The variable is set by advice on `org-duckdb-blocks-register-execution'
 and consumed during execution.")
 
+;;;###autoload
 (defun org-babel-duckdb-cleanup-sessions ()
   "Clean up dead DuckDB sessions from the session registry.
 This removes sessions whose processes or buffers no longer exist.
@@ -886,7 +887,7 @@ showing only the most recent output."
     output))
 
 ;;; Session Management Functions
-
+;;;###autoload
 (defun org-babel-duckdb-list-sessions ()
   "List all active DuckDB sessions.
 Examines the session registry to find all currently running DuckDB
@@ -906,6 +907,7 @@ This function is useful for:
              org-babel-duckdb-sessions)
     (nreverse sessions)))
 
+;;;###autoload
 (defun org-babel-duckdb-create-session (session-name &optional db-file)
   "Create a new DuckDB session named SESSION-NAME.
 Initializes a new DuckDB process with the given name. This is useful
@@ -925,6 +927,7 @@ This provides a convenient way to:
   (let ((params (if db-file (list (cons :db db-file)) nil)))
     (org-babel-duckdb-initiate-session session-name params)))
 
+;;;###autoload
 (defun org-babel-duckdb-delete-session (session-name)
   "Delete the DuckDB session named SESSION-NAME.
 This will terminate the DuckDB process and remove the session
@@ -956,6 +959,7 @@ accumulation of zombie processes or buffers."
       (remhash session-name org-babel-duckdb-sessions)
       (message "Session %s deleted" session-name))))
 
+;;;###autoload
 (defun org-babel-duckdb-display-sessions ()
   "Display information about all active DuckDB sessions in a buffer.
 Creates a formatted report showing details about each session, including:
