@@ -416,17 +416,21 @@ be cleaned up automatically according to Org's file handling rules."
 (defun org-babel-duckdb-clean-output (output)
 "Remove prompt characters from first line of OUTPUT."
 (if (string-empty-p output)
-        output
-(let ((prompt-char (regexp-quote org-babel-duckdb-prompt-char))
+    output
+  (let ((prompt-char (regexp-quote org-babel-duckdb-prompt-char))
         (newline-pos (string-search "\n" output)))
-        (if newline-pos
+    (if newline-pos
         (let ((first-line (substring output 0 newline-pos))
-                (rest (substring output newline-pos)))
-        (concat (replace-regexp-in-string prompt-char "" first-line) rest))
-        (replace-regexp-in-string prompt-char "" output)))))
+              (rest (substring output newline-pos)))
+          (concat (replace-regexp-in-string prompt-char "" first-line) rest))
+      (replace-regexp-in-string prompt-char "" output)))))
 
 ;;; Session Management
-
+;; TODO: re-eval need for comint usage
+;; NOTE: comint usage still creates significant delays when we output contents
+;; to it before rerouting it to our result section, I might do away with showing
+;; results in the comint shell buffer UNLESS overriden by a src block param like
+;; :show-comint
 (defun org-babel-duckdb-initiate-session (&optional session-name params)
   "Create or reuse a DuckDB session.
 SESSION-NAME is the name of the session, and PARAMS are additional parameters.
@@ -450,13 +454,12 @@ The `default' session is used when SESSION-NAME is `yes' or nil."
       ;; Only start a new process if buffer doesn't have a live process
       (unless (and process (process-live-p process))
         (with-current-buffer buffer
-          ;; Clear buffer
           (erase-buffer)
 
           ;; Configure as comint buffer for async support
           (unless (derived-mode-p 'comint-mode)
             (comint-mode)
-            (setq-local comint-prompt-regexp "D")
+            (setq-local comint-prompt-regexp "^D> ")
             (setq-local comint-process-echoes t))
 
           ;; Start the process directly using comint-exec
@@ -475,15 +478,30 @@ The `default' session is used when SESSION-NAME is `yes' or nil."
 
             ;; Ensure we have a process
             (unless (and process (process-live-p process))
-              (error "Failed to start DuckDB process"))
+              (error "Failed to start DuckDB process for session %s" session-name))
 
-            ;; Wait for prompt
-            (while (not (save-excursion
-                          (goto-char (point-min))
-                          (re-search-forward "D" nil t)))
-              (accept-process-output process 0.1)))))
+            (set-process-coding-system process 'utf-8 'utf-8)
 
-      ;; Return the session buffer
+            ;; Waiting
+            (let ((timeout 10)
+                  (waited 0)
+                  (ready nil)
+                  (last-pos (point-min)))
+              (while (and (< waited timeout) (not ready))
+                (accept-process-output process 0.2)
+                (setq waited (+ waited 0.2))
+
+                (save-excursion
+                  (goto-char last-pos)
+                  (when (re-search-forward "\\(^D> \\|v[0-9]+\\.[0-9]+\\.[0-9]+\\|Enter \"\\.\\)" nil t)
+                    (setq ready t)
+                    (setq last-pos (point)))))
+
+              (unless ready
+                (kill-process process)
+                (error "DuckDB session %s failed to initialize within %d seconds"
+                       session-name timeout))))))
+
       buffer)))
 
 ;;; Execution Functions
