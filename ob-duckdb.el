@@ -644,105 +644,159 @@ PARAMS are the block's header arguments and options.
 BLOCK-ID and EXEC-ID identify the source block and execution context.
 
 Returns nil, as the result handling happens asynchronously via process filter."
-  (message "[ob-duckdb] Starting async execution for block %s" (substring block-id 0 8))
 
-  ;; First, update the source block with a placeholder
   (when-let* ((registry-info (gethash block-id org-duckdb-blocks-registry))
               (file (plist-get registry-info :file))
               (buffer-name (plist-get registry-info :buffer))
               (begin (plist-get registry-info :begin))
               (buf (or (and file (file-exists-p file) (find-file-noselect file))
                        (get-buffer buffer-name))))
+
+    ;; First, update the source block with a placeholder
     (with-current-buffer buf
       (save-excursion
         (goto-char begin)
         (org-babel-remove-result)
         (org-babel-insert-result "Executing asynchronously..."
-                                (cdr (assq :result-params params))))))
+                                 (cdr (assq :result-params params))))))
+  (let* ((session-buffer (org-babel-duckdb-initiate-session session params))
+         (process (get-buffer-process session-buffer))
+         (temp-out-file (org-babel-temp-file "duckdb-async-out-"))
+         (temp-err-file (org-babel-temp-file "duckdb-async-err-"))
+         (temp-script-file (org-babel-duckdb-write-temp-sql body))
+         (result-params (cdr (assq :result-params params)))
+         (completion-marker (format "ASYNC_COMPLETE_%s" exec-id))
+         (original-filter (process-filter process)))
 
-  ;; Create a unique marker for this execution
-  (let* ((start-marker (format "DUCKDB_START_%s" exec-id))
-         (end-marker (format "DUCKDB_END_%s" exec-id))
-         (temp-in-file (org-babel-duckdb-write-temp-sql body))
-         (session-buffer (org-babel-duckdb-initiate-session session params))
-         (output-buffer (generate-new-buffer (format "*duckdb-async-output-%s*" exec-id)))
-         (result-params (cdr (assq :result-params params))))
+    (org-duckdb-blocks-update-execution-status exec-id 'running)
+    (org-duckdb-blocks-store-process exec-id process)
 
-    ;; Add comint output filter to capture all output
-    (let ((process (get-buffer-process session-buffer))
-          (complete nil)
-          (capturing nil))
+    ;; show progress or not, depends on custom var
+    (when org-babel-duckdb-show-progress
+      (org-babel-duckdb-create-progress-monitor exec-id session-buffer))
 
-      ;; Create a process filter that will capture output between our markers
-      (let ((original-filter (process-filter process))
-            (buffer output-buffer))
+    (let ((execution-sequence
+           (concat
+            ".bail on\n"
+            (format ".output %s\n" (expand-file-name temp-out-file))
+            (format ".read %s\n" (expand-file-name temp-script-file))
+            ".output\n"
+            (format ".print \"%s\"\n" completion-marker))))
 
-        (set-process-filter
-         process
-         (lambda (proc string)
-           ;; Check for start marker
-           (when (and (not capturing) (string-match-p start-marker string))
-             (setq capturing t))
+      ;; Create a process filter that will capture output
+      (set-process-filter
+       process
+       (lambda (proc string)
+         (when (gethash exec-id org-babel-duckdb-progress-buffers)
+           (org-babel-duckdb-update-progress-display exec-id string))
 
-           ;; Capture output while between markers
-           (when capturing
-             (with-current-buffer buffer
-               (goto-char (point-max))
-               (insert string))
+         ;; Capture errors from async exec, display in progress buffer
+         (when (string-match-p "\\(Error:\\|Exception:\\|SYNTAX_ERROR\\|CATALOG_ERROR\\)" string)
+           (org-babel-duckdb-capture-session-error exec-id string temp-err-file))
 
-             ;; Check for end marker
-             (when (string-match-p end-marker string)
-               (setq capturing nil)
-               (setq complete t)))
+         ;; Check for completion marker "ASYNC_COMPLETE_*"
+         (when (string-search completion-marker string)
+           (set-process-filter proc original-filter)
+           (funcall (org-babel-duckdb-async-sentinel
+                     exec-id temp-out-file temp-err-file temp-script-file
+                     block-id params result-params)
+                    proc "finished\n"))
 
-           ;; Call original filter to maintain normal behavior
-           (when original-filter
-             (funcall original-filter proc string))))
+         ;; Call original filter to maintain normal behavior
+         (when original-filter
+           (funcall original-filter proc string))))
 
-        ;; Send the command to the process
-        (process-send-string
-         process
-         (format "\n.print \"%s\"\n.read %s\n.print \"%s\"\n"
-                 start-marker
-                 temp-in-file
-                 end-marker))
+      (process-send-string process execution-sequence)
+      process)))
 
-        ;; Wait for a short while to ensure the command starts executing
-        (sleep-for 0.05)
+;; TODO: FULLY DOCUMENT THIS FUNCTION, tears of blood were poured reasearching sentinels
+(defun org-babel-duckdb-async-sentinel (exec-id temp-out-file temp-err-file temp-script-file
+                                                block-id params result-params)
+  "Create sentinel function for async execution EXEC-ID.
+Handles output from executing TEMP-SCRIPT-FILE with results to TEMP-OUT-FILE and
+errors from TEMP-ERR-FILE.
+Updates BLOCK-ID with results according to RESULT-PARAMS."
+  (lambda (process event)
+    (let ((exit-status (process-exit-status process))
+          (status-msg (string-trim event)))
 
-        ;; Store the timer in a lexical variable that will be captured by the lambda
-        (let ((timer-self nil))
-          (setq timer-self
-                (run-with-timer
-                 0.1 0.1
-                 (lambda ()
-                   (when complete
-                     ;; Cancel this timer first
-                     (when timer-self
-                       (cancel-timer timer-self))
+      (unwind-protect
+          (condition-case err
+              (let* ((stdout-content (if (file-exists-p temp-out-file)
+                                         (with-temp-buffer
+                                           (insert-file-contents temp-out-file)
+                                           (buffer-string))
+                                       ""))
+                     (stderr-content (if (file-exists-p temp-err-file)
+                                         (with-temp-buffer
+                                           (insert-file-contents temp-err-file)
+                                           (buffer-string))
+                                       ""))
+                     (has-output (not (string-empty-p (string-trim stdout-content))))
+                     (has-errors (not (string-empty-p (string-trim stderr-content)))))
 
-                     ;; Process the captured output
-                     (with-current-buffer buffer
-                       (let* ((raw-output (buffer-string))
-                              ;; Remove the markers
-                              (marker-cleaned
-                               (replace-regexp-in-string
-                                (format "\\(%s\\|%s\\)"
-                                        (regexp-quote start-marker)
-                                        (regexp-quote end-marker))
-                                ""
-                                raw-output)))
+                (cond
+                 ((and (string-match-p "finished" event) (zerop exit-status))
+                  (cond
+                   (has-errors
+                    (org-duckdb-blocks-update-execution-status
+                     exec-id 'error (format "DuckDB Error: %s" stderr-content))
+                    (org-babel-duckdb-process-and-update-result
+                     block-id (format "DuckDB Error:\n%s" stderr-content)
+                     params result-params))
+                   (has-output
+                    (org-duckdb-blocks-update-execution-status exec-id 'completed)
+                    (org-babel-duckdb-process-and-update-result
+                     block-id stdout-content params result-params))
+                   (t
+                    (org-duckdb-blocks-update-execution-status
+                     exec-id 'warning "No output produced")
+                    (org-babel-duckdb-process-and-update-result
+                     block-id "Query completed but produced no output"
+                     params result-params))))
 
-                         ;; Process the result through the same pipeline as sync
-                         (org-babel-duckdb-process-and-update-result
-                          block-id marker-cleaned params result-params)))
+                 ((string-match-p "\\(killed\\|terminated\\|interrupt\\)" event)
+                  (org-duckdb-blocks-update-execution-status exec-id 'cancelled status-msg)
+                  (org-babel-duckdb-process-and-update-result
+                   block-id (format "Execution cancelled: %s" status-msg)
+                   params result-params))
 
-                     ;; Restore original filter and clean up
-                     (set-process-filter process original-filter)
-                     (kill-buffer buffer))))))
+                 ((not (zerop exit-status))
+                  (let ((error-msg (if has-errors stderr-content
+                                     (format "Process exited with code %d" exit-status))))
+                    (org-duckdb-blocks-update-execution-status exec-id 'error error-msg)
+                    (org-babel-duckdb-process-and-update-result
+                     block-id (format "DuckDB Error (exit code %d):\n%s"
+                                      exit-status error-msg)
+                     params result-params)))
 
-        ;; Return nil - we've already handled the placeholder update
-        nil))))
+                 (t
+                  (org-duckdb-blocks-update-execution-status exec-id 'unknown event)
+                  (org-babel-duckdb-process-and-update-result
+                   block-id (format "Unknown process status: %s" event)
+                   params result-params))))
+
+            (error
+             (let ((error-msg (format "Sentinel error: %S" err)))
+               (org-duckdb-blocks-update-execution-status exec-id 'error error-msg)
+               (org-babel-duckdb-process-and-update-result
+                block-id error-msg params result-params))))
+
+        (org-babel-duckdb-cleanup-progress-display exec-id)
+        (when (file-exists-p temp-out-file) (delete-file temp-out-file))
+        (when (file-exists-p temp-err-file) (delete-file temp-err-file))
+        (when (file-exists-p temp-script-file) (delete-file temp-script-file))))))
+
+;; TODO: finish documenting `org-babel-duckdb-capture-session-error'
+(defun org-babel-duckdb-capture-session-error (exec-id error-output temp-err-file)
+  "Capture ERROR-OUTPUT for EXEC-ID to TEMP-ERR-FILE."
+  (with-temp-file temp-err-file
+    (when (file-exists-p temp-err-file)
+      (insert-file-contents temp-err-file))
+    (goto-char (point-max))
+    (insert (format "[%s] %s\n"
+                    (format-time-string "%H:%M:%S")
+                    (string-trim error-output)))))
 
 (defun org-babel-duckdb-process-and-update-result (block-id raw-output params result-params)
   "Process RAW-OUTPUT and update result for the block with BLOCK-ID.
