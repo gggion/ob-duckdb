@@ -147,10 +147,25 @@ or query results to prevent unintended text removal."
   :type 'string
   :group 'org-babel-duckdb)
 
-;; TODO: finish documenting this option
+;; TODO: finish documenting `org-babel-duckdb-show-progress'
 (defcustom org-babel-duckdb-show-progress t
   "Whether to show progress indicators during async execution."
   :type 'boolean
+  :group 'org-babel-duckdb)
+
+;; TODO: check documentation for `org-babel-duckdb-max-rows'
+(defcustom org-babel-duckdb-max-rows 200000
+  "Maximum number of output lines to display.
+Large result sets are automatically truncated to this many lines
+to prevent Emacs from freezing when processing massive outputs.
+
+This applies to both inline results and :output buffer display.
+
+Set to nil to disable truncation (not recommended for large queries).
+
+Can be overridden per-block with :max-rows header argument."
+  :type '(choice (integer :tag "Maximum rows")
+                 (const :tag "No limit" nil))
   :group 'org-babel-duckdb)
 
 ;;; Internal Variables
@@ -416,7 +431,56 @@ be cleaned up automatically according to Org's file handling rules."
       (insert body))
     temp-file))
 
-;; TODO: finish documenting this function
+;; NOTE 2025-11-04: For now we'll have to do with simple file reading. Cons are
+;; that the file is fully loaded into memory, then we get first `max-lines' and
+;; send them to our output section. in a prev version we had chunked file
+;; reading working but it did not solve emacs freezing when having to send the
+;; chunks over to the main thread. Pros are that it's much simpler and less
+;; maintenance overhead, so for now it'll do.
+;; TODO: *IMPORTANT* finish documenting `org-babel-duckdb-read-file-lines'
+(defun org-babel-duckdb-read-file-lines (file max-lines)
+  "Read up to MAX-LINES from FILE line-by-line.
+Returns cons (content . truncated-p)."
+  (if (or (not max-lines) (<= max-lines 0))
+      (cons (with-temp-buffer
+              (insert-file-contents file)
+              (buffer-string))
+            nil)
+    
+    (with-temp-buffer
+      (insert-file-contents file)
+      (goto-char (point-min))
+      (let ((lines-kept 0)
+            (truncated nil))
+        
+        ;; Count forward to max-lines
+        (while (and (< lines-kept max-lines)
+                    (not (eobp)))
+          (forward-line 1)
+          (setq lines-kept (1+ lines-kept)))
+        
+        ;; Check if we're at end of buffer
+        (unless (eobp)
+          (setq truncated t)
+          ;; Delete everything from current point to end
+          (delete-region (point) (point-max)))
+        
+        (cons (buffer-string) truncated)))))
+
+;; TODO: finish documenting `org-babel-duckdb-get-max-rows' 
+(defun org-babel-duckdb-get-max-rows (params)
+  "Determine maximum rows setting from PARAMS.
+Checks :max-rows header argument first, falls back to
+`org-babel-duckdb-max-rows' customization variable.
+Returns nil if unlimited output is requested."
+  (let ((max-rows-param (cdr (assq :max-rows params))))
+    (cond
+     ((null max-rows-param) org-babel-duckdb-max-rows)
+     ((string= max-rows-param "nil") nil)
+     ((numberp max-rows-param) max-rows-param)
+     (t (string-to-number max-rows-param)))))
+
+;; TODO: finish documenting `org-babel-duckdb-clean-output'
 (defun org-babel-duckdb-clean-output (output)
 "Remove prompt characters from first line of OUTPUT."
 (if (string-empty-p output)
@@ -430,7 +494,7 @@ be cleaned up automatically according to Org's file handling rules."
       (replace-regexp-in-string prompt-char "" output)))))
 
 ;;; Session Management
-;; TODO: re-eval need for comint usage
+;; TODO: re-eval need for comint usage in `org-babel-duckdb-initiate-session'
 ;; NOTE: comint usage still creates significant delays when we output contents
 ;; to it before rerouting it to our result section, I might do away with showing
 ;; results in the comint shell buffer UNLESS overriden by a src block param like
@@ -712,31 +776,37 @@ Returns nil, as the result handling happens asynchronously via process filter."
       (process-send-string process execution-sequence)
       process)))
 
-;; TODO: FULLY DOCUMENT THIS FUNCTION, tears of blood were poured reasearching sentinels
+;; TODO: FULLY DOCUMENT `org-babel-duckdb-async-sentinel', tears of blood were poured reasearching sentinels
 (defun org-babel-duckdb-async-sentinel (exec-id temp-out-file temp-err-file temp-script-file
-                                                block-id params result-params)
+                                               block-id params result-params)
   "Create sentinel function for async execution EXEC-ID.
-Handles output from executing TEMP-SCRIPT-FILE with results to TEMP-OUT-FILE and
-errors from TEMP-ERR-FILE.
+Handles output from TEMP-OUT-FILE and errors from TEMP-ERR-FILE.
 Updates BLOCK-ID with results according to RESULT-PARAMS."
   (lambda (process event)
     (let ((exit-status (process-exit-status process))
-          (status-msg (string-trim event)))
+          (status-msg (string-trim event))
+          (max-rows (org-babel-duckdb-get-max-rows params)))
 
       (unwind-protect
           (condition-case err
-              (let* ((stdout-content (if (file-exists-p temp-out-file)
-                                         (with-temp-buffer
-                                           (insert-file-contents temp-out-file)
-                                           (buffer-string))
-                                       ""))
+              (let* ((stdout-result (if (file-exists-p temp-out-file)
+                                       (org-babel-duckdb-read-file-lines temp-out-file max-rows)
+                                     (cons "" nil)))
+                     (stdout-content (car stdout-result))
+                     (was-truncated (cdr stdout-result))
                      (stderr-content (if (file-exists-p temp-err-file)
-                                         (with-temp-buffer
-                                           (insert-file-contents temp-err-file)
-                                           (buffer-string))
-                                       ""))
+                                        (with-temp-buffer
+                                          (insert-file-contents temp-err-file)
+                                          (buffer-string))
+                                      ""))
                      (has-output (not (string-empty-p (string-trim stdout-content))))
                      (has-errors (not (string-empty-p (string-trim stderr-content)))))
+
+                (when was-truncated
+                  (setq stdout-content 
+                        (concat stdout-content
+                                (format "\n\n[Output truncated to %d lines - customize org-babel-duckdb-max-rows to change]"
+                                        max-rows))))
 
                 (cond
                  ((and (string-match-p "finished" event) (zerop exit-status))
@@ -766,7 +836,7 @@ Updates BLOCK-ID with results according to RESULT-PARAMS."
 
                  ((not (zerop exit-status))
                   (let ((error-msg (if has-errors stderr-content
-                                     (format "Process exited with code %d" exit-status))))
+                                    (format "Process exited with code %d" exit-status))))
                     (org-duckdb-blocks-update-execution-status exec-id 'error error-msg)
                     (org-babel-duckdb-process-and-update-result
                      block-id (format "DuckDB Error (exit code %d):\n%s"
