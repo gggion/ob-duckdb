@@ -1002,6 +1002,34 @@ showing only the most recent output."
 
 ;;; Interactive Commands
 
+;; TODO: Finish documentation for `org-babel-duckdb-cancel-execution'
+;;;###autoload
+(defun org-babel-duckdb-cancel-execution (exec-id)
+  "Cancel execution with EXEC-ID if it's still active."
+  (interactive
+   (list (completing-read "Cancel execution: "
+                          (org-duckdb-blocks-get-running-executions))))
+  (if-let ((process (org-duckdb-blocks-get-process exec-id)))
+      (when (process-live-p process)
+        (interrupt-process process)
+        (message "[ob-duckdb] Interrupted execution %s" (substring exec-id 0 8))
+        (org-duckdb-blocks-update-execution-status exec-id 'cancelled))
+    (message "[ob-duckdb] Execution %s not found or already completed"
+            (substring exec-id 0 8))))
+
+;; TODO: Finish documentation for `org-babel-duckdb-cancel-current-execution'
+;;;###autoload
+(defun org-babel-duckdb-cancel-current-execution ()
+  "Cancel the most recent execution in current buffer."
+  (interactive)
+  (if-let* ((element (org-element-at-point))
+            (is-duckdb (and (eq (car element) 'src-block)
+                           (string= (org-element-property :language element) "duckdb")))
+            (begin (org-element-property :begin element))
+            (exec-id (org-duckdb-blocks-get-latest-exec-id-for-block begin)))
+      (org-babel-duckdb-cancel-execution exec-id)
+    (message "[ob-duckdb] No active execution found for current block")))
+
 ;;;###autoload
 (defun org-babel-duckdb-list-sessions ()
   "List all active DuckDB sessions.
