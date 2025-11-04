@@ -153,6 +153,9 @@ or query results to prevent unintended text removal."
   :type 'boolean
   :group 'org-babel-duckdb)
 
+;;; Internal Variables
+(defvar org-babel-duckdb-progress-buffers (make-hash-table :test 'equal)
+  "Hash table tracking progress display buffers by execution ID.")
 
 ;;; Session Management
 
@@ -940,7 +943,65 @@ showing only the most recent output."
     ;; Return output for further processing if needed
     output))
 
-;;; Session Management Functions
+;;; Progress Monitoring
+
+;; TODO: Finish documenting `org-babel-duckdb-create-progress-monitor'
+;; TODO: `window-height' should be a custom var
+(defun org-babel-duckdb-create-progress-monitor (exec-id session-buffer)
+  "Create progress monitoring buffer for EXEC-ID using SESSION-BUFFER."
+  (let* ((progress-buffer-name (format "*DuckDB Progress-%s*" (substring exec-id 0 8)))
+         (progress-buffer (get-buffer-create progress-buffer-name)))
+
+    (puthash exec-id progress-buffer org-babel-duckdb-progress-buffers)
+
+    (with-current-buffer progress-buffer
+      (erase-buffer)
+      (insert (format "DuckDB Execution Progress\nExecution ID: %s\n\n" exec-id))
+      (goto-char (point-max)))
+
+    (display-buffer progress-buffer
+                   '(display-buffer-in-side-window
+                     (side . bottom)
+                     (window-height . 0.15)))
+
+    progress-buffer))
+
+;; TODO: Finish documenting `org-babel-duckdb-update-progress-display'
+(defun org-babel-duckdb-update-progress-display (exec-id output)
+  "Update progress display for EXEC-ID with OUTPUT."
+  (when-let ((progress-buffer (gethash exec-id org-babel-duckdb-progress-buffers)))
+    (when (buffer-live-p progress-buffer)
+      (with-current-buffer progress-buffer
+        (goto-char (point-max))
+        (let ((progress-lines (cl-remove-if-not
+                              (lambda (line)
+                                (string-match-p "\\([0-9]+%\\|▕\\)" line))
+                              (split-string output "\n"))))
+          (dolist (line progress-lines)
+            (when (not (string-empty-p line))
+              (insert (format "[%s] %s\n"
+                             (format-time-string "%H:%M:%S")
+                             (string-trim line)))))
+          (goto-char (point-max)))))))
+
+;; TODO: Finish documenting `org-babel-duckdb-cleanup-progress-display'
+(defun org-babel-duckdb-cleanup-progress-display (exec-id)
+  "Clean up progress display for EXEC-ID."
+  (when-let ((progress-buffer (gethash exec-id org-babel-duckdb-progress-buffers)))
+    (when (buffer-live-p progress-buffer)
+      (with-current-buffer progress-buffer
+        (goto-char (point-max))
+        (insert (format "\n[%s] Execution completed.\n"
+                        (format-time-string "%H:%M:%S"))))
+      (run-with-timer 3.0 nil
+                     (lambda ()
+                       (when (buffer-live-p progress-buffer)
+                         (kill-buffer progress-buffer)))))
+    (remhash exec-id org-babel-duckdb-progress-buffers)))
+
+
+;;; Interactive Commands
+
 ;;;###autoload
 (defun org-babel-duckdb-list-sessions ()
   "List all active DuckDB sessions.
