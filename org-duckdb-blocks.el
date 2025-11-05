@@ -8,53 +8,45 @@
 
 ;;; Commentary:
 
-;; The `org-duckdb-blocks' package provides a comprehensive tracking and
-;; management system for DuckDB source blocks in Org mode documents.  It serves
-;; as the foundation for execution history, block identification, and navigation
-;; functionality in the `ob-duckdb' ecosystem.
+;; This package tracks DuckDB source blocks in Org mode documents, providing
+;; execution history, block identification, and navigation functionality.
 ;;
-;; Key Features:
+;; The tracking system solves a critical problem for asynchronous execution:
+;; routing results back to the correct source block even after the document
+;; has been edited. It also provides useful execution history and navigation
+;; independent of async execution.
 ;;
-;; - Persistent Block Identity: Assigns and maintains unique IDs for DuckDB
-;;   source blocks across editing sessions using buffer-local properties
+;; Basic usage:
 ;;
-;; - Execution History: Records each execution with timestamps, content
-;;   snapshots, and parameter information
+;;     (require 'org-duckdb-blocks)
+;;     (org-duckdb-blocks-setup)
 ;;
-;; - Position Tracking: Maintains up-to-date coordinates of blocks even as
-;;   document content changes
+;; This automatically tracks all DuckDB block executions via advice on
+;; `org-babel-execute-src-block'.
 ;;
-;; - Navigation Tools: Provides commands to revisit any previously executed
-;;   block
+;; Key features:
+;; - Persistent block identity via buffer-local properties
+;; - Execution history with timestamps and content snapshots
+;; - Position tracking that survives document edits
+;; - Navigation commands to revisit executed blocks
+;; - Automatic cleanup of stale entries
 ;;
-;; - State Preservation: Captures header arguments, switches, and content at
-;;   execution time
+;; The package maintains three data structures:
+;; - Registry: Maps block IDs to current positions and content
+;; - Executions: Maps execution IDs to execution details
+;; - History: Circular buffer of recent executions for fast access
 ;;
-;; - Automatic Cleanup: Removes stale entries when blocks are deleted or moved
+;; Navigation commands:
+;; - `org-duckdb-blocks-navigate-recent' - Browse recent executions
+;; - `org-duckdb-blocks-goto-block' - Jump to block by ID
+;; - `org-duckdb-blocks-goto-execution' - Jump to execution by ID
 ;;
-;; This system was primarily designed to support asynchronous execution in
-;; `ob-duckdb-async', allowing results to be correctly routed back to their
-;; source blocks even after substantial document edits. However, it also
-;; provides general-purpose execution tracking and navigation that's useful
-;; independently.
+;; Reporting commands:
+;; - `org-duckdb-blocks-list' - Show all tracked blocks
+;; - `org-duckdb-blocks-recent' - Show recent executions
+;; - `org-duckdb-blocks-execution-info' - Detailed execution information
 ;;
-;; To use this package, simply require it from `ob-duckdb' or activate it
-;; directly with:
-;;
-;;   (require 'org-duckdb-blocks)
-;;   (org-duckdb-blocks-setup)
-;;
-;; Internally, the package maintains two primary data structures:
-;;
-;; 1. A registry mapping block IDs to their current positions and content
-;; 2. An execution history mapping execution IDs to execution details
-;;
-;; Additionally, a circular buffer tracks recent executions for fast access and
-;; navigation.
-;;
-;; The block tracking occurs automatically via advice on `org-babel-execute-src-block',
-;; capturing information whenever a DuckDB block is executed.
-;; TODO: there's a lot of WHAT, not enough WHY in the docstrings
+;; For integration with ob-duckdb.el, see Info node `(ob-duckdb) Block Tracking'.
 
 ;;; Code:
 
@@ -62,113 +54,168 @@
 (require 'org-macs)
 (require 'org-id)
 
-;; --- ID normalization utility -----------------------------
-(defun org-duckdb-blocks-normalize-id (id)
-  "Return ID as plain string without any text properties.
-This is critical for consistent hashtable lookups since text properties
-can cause string equality comparisons to fail even when the visible
-content is identical. All IDs in the system should be normalized
-with this function before storage or comparison."
-  (if (stringp id) (substring-no-properties id) id))
-;; ----------------------------------------------------------
+;;;; Utility Functions
 
-;;; Core Data Structures
+(defun org-duckdb-blocks-normalize-id (id)
+  "Return ID as plain string without text properties.
+Critical for consistent hashtable lookups since text properties cause
+string equality comparisons to fail.
+
+All IDs must be normalized before storage or comparison.
+Used by all functions that handle block or execution IDs."
+  (if (stringp id) (substring-no-properties id) id))
+
+;;;; Core Data Structures
 
 (defvar org-duckdb-blocks-registry (make-hash-table :test 'equal)
-  "Registry mapping block IDs to metadata.
-The registry is the primary data structure tracking all known DuckDB blocks.
-Each entry maps a block ID (string) to a property list with:
+  "Registry mapping block IDs to current metadata.
 
-`:begin'     - Position of block beginning
-`:end'       - Position of block end
-`:file'      - File containing the block
-`:buffer'    - Buffer name containing the block
-`:content'   - Current block content (SQL text)")
+Keys are block ID strings (UUIDs).
+Values are plists with:
+  :begin     - Position of block start
+  :end       - Position of block end  
+  :file      - File containing the block
+  :buffer    - Buffer name containing the block
+  :content   - Current block SQL content
+
+Managed by `org-duckdb-blocks-register-execution' and
+`org-duckdb-blocks-update-all-block-positions'.
+
+Queried by `org-duckdb-blocks-goto-block' for navigation.
+Cleaned by `org-duckdb-blocks-clear'.")
 
 (defvar org-duckdb-blocks-executions (make-hash-table :test 'equal)
   "Execution history mapping execution IDs to details.
-Maintains the complete history of all DuckDB block executions.
-Each entry maps an execution ID (string) to a property list with:
 
-`:block-id'    - ID of the source block executed
-`:begin'       - Block position at execution time
-`:time'        - Timestamp of execution
-`:content'     - Content executed (snapshot)
-`:parameters'  - Header parameters used
-`:header'      - Parsed header arguments
-`:switches'    - Block switches applied
-`:line-count'  - Number of lines in content
-`:name'        - Name of the block (if any)")
+Keys are execution ID strings (UUIDs).
+Values are plists with:
+  :block-id    - ID of the executed block (see `org-duckdb-blocks-registry')
+  :begin       - Block position at execution time
+  :time        - Timestamp of execution
+  :content     - SQL content executed (snapshot)
+  :parameters  - Header parameters string
+  :header      - Parsed header arguments
+  :switches    - Block switches
+  :line-count  - Number of lines in content
+  :name        - Block name (if any)
+  :status      - Execution status (see `org-duckdb-blocks-execution-status')
+  :process     - Process object (if running, see `org-duckdb-blocks-store-process')
+  :error-info  - Error details (if status is 'error)
+
+Populated by `org-duckdb-blocks-register-execution'.
+Queried by `org-duckdb-blocks-execution-info' and navigation commands.
+Also see `org-duckdb-blocks-history-vector' for fast recent access.")
 
 (defvar org-duckdb-blocks-history-vector (make-vector 100 nil)
-  "Circular buffer containing recent executions for fast access.
-This data structure provides O(1) access to the most recent executions
-without having to scan the full executions hash table. Each slot
-contains a vector with [exec-id block-id timestamp] for quick rendering
-of history lists and navigation controls.")
+  "Circular buffer of recent executions for O(1) access.
+
+Each slot contains a vector [exec-id block-id timestamp] or nil.
+Provides fast access to recent executions without scanning
+`org-duckdb-blocks-executions'.
+
+Size controlled by `org-duckdb-blocks-history-capacity'.
+Current write position in `org-duckdb-blocks-history-index'.
+Entry count in `org-duckdb-blocks-history-count'.
+
+Updated by `org-duckdb-blocks-add-to-history'.
+Queried by `org-duckdb-blocks-get-recent-history'.")
 
 (defvar org-duckdb-blocks-history-index 0
-  "Current position in the history vector's circular buffer.
-Indicates where the next execution record will be written in
-`org-duckdb-blocks-history-vector'.")
+  "Current write position in history circular buffer.
+Points to where next execution will be written in
+`org-duckdb-blocks-history-vector'.
+
+Incremented modulo `org-duckdb-blocks-history-capacity' by
+`org-duckdb-blocks-add-to-history'.")
 
 (defvar org-duckdb-blocks-history-count 0
-  "Number of entries currently stored in the history vector.
-Used to determine how many valid entries exist in the circular
-buffer when retrieving recent history, especially before the buffer
-has been completely filled.")
+  "Number of valid entries in history buffer.
+Used to determine how many entries exist before buffer fills.
+Capped at `org-duckdb-blocks-history-capacity'.
+
+Updated by `org-duckdb-blocks-add-to-history'.
+Used by `org-duckdb-blocks-get-recent-history'.")
 
 (defvar org-duckdb-blocks-history-capacity 100
-  "Maximum number of recent executions to store in the history vector.
-This limits the size of the circular buffer to prevent unbounded growth
-while still providing convenient access to recent execution history.")
+  "Maximum entries in history circular buffer.
+Limits `org-duckdb-blocks-history-vector' size.
+
+Change requires calling `org-duckdb-blocks-clear' to resize buffer.")
 
 (defvar org-duckdb-blocks-execution-status (make-hash-table :test 'equal)
-  "Hash table tracking execution status by execution ID.
-Maps exec-id to status symbols:
-        `running', `completed', `cancelled', `error', `warning'.")
+  "Execution status tracking by execution ID.
 
-;;; Core Utility Functions
+Keys are execution ID strings.
+Values are status symbols: running, completed, cancelled, error, warning.
+
+Updated by `org-duckdb-blocks-update-execution-status'.
+Queried by `org-duckdb-blocks-get-execution-status' and
+`org-duckdb-blocks-get-running-executions'.
+
+Also stored in `:status' field of `org-duckdb-blocks-executions'.")
+
+;;;; History Management
 
 (defun org-duckdb-blocks-add-to-history (exec-id block-id timestamp)
-  "Record execution in history buffer for EXEC-ID, BLOCK-ID at TIMESTAMP.
-Adds an entry to the circular history buffer, ensuring IDs are
-normalized and overwriting the oldest entry when the buffer is full.
-This maintains a fixed-size record of the most recent executions."
-  (let ((entry (vector (org-duckdb-blocks-normalize-id exec-id) (org-duckdb-blocks-normalize-id block-id) timestamp)))
-    ;; Store at current index and advance
+  "Add execution record to circular history buffer.
+
+EXEC-ID and BLOCK-ID are normalized before storage.
+TIMESTAMP is from `current-time'.
+
+Overwrites oldest entry when buffer is full.
+
+Updates `org-duckdb-blocks-history-vector',
+`org-duckdb-blocks-history-index', and
+`org-duckdb-blocks-history-count'.
+
+Called by `org-duckdb-blocks-register-execution'.
+Retrieved via `org-duckdb-blocks-get-recent-history'."
+  (let ((entry (vector (org-duckdb-blocks-normalize-id exec-id)
+                       (org-duckdb-blocks-normalize-id block-id)
+                       timestamp)))
     (aset org-duckdb-blocks-history-vector org-duckdb-blocks-history-index entry)
-    ;; Update index with wraparound and count with capping
     (setq org-duckdb-blocks-history-index
           (% (1+ org-duckdb-blocks-history-index) org-duckdb-blocks-history-capacity)
           org-duckdb-blocks-history-count
           (min (1+ org-duckdb-blocks-history-count) org-duckdb-blocks-history-capacity))))
 
 (defun org-duckdb-blocks-get-recent-history (n)
-  "Retrieve the N most recent executions from history, newest first.
-Returns a list of execution entries from the circular history buffer.
-Each entry is a vector of [exec-id block-id timestamp].
-This enables efficient access to recent history without scanning
-the full executions hash table."
+  "Retrieve N most recent executions, newest first.
+
+Returns list of vectors [exec-id block-id timestamp].
+Returns fewer than N entries if buffer not yet full.
+
+Efficiently accesses `org-duckdb-blocks-history-vector' without
+scanning `org-duckdb-blocks-executions'.
+
+Used by `org-duckdb-blocks-navigate-recent', `org-duckdb-blocks-recent',
+and `org-duckdb-blocks-show-execution-status'."
   (let* ((count (min n org-duckdb-blocks-history-count))
-         ;; Calculate starting index based on whether buffer is full
          (start-idx (if (< org-duckdb-blocks-history-count org-duckdb-blocks-history-capacity)
-                        ;; Not full yet, start from the highest filled index
                         (1- org-duckdb-blocks-history-count)
-                      ;; Full buffer, start from the position before the current write position
                       (mod (+ org-duckdb-blocks-history-index
                              (- org-duckdb-blocks-history-capacity 1))
                            org-duckdb-blocks-history-capacity)))
          result)
-    ;; Collect entries working backward from start-idx
     (dotimes (i count result)
       (let* ((idx (mod (- start-idx i) org-duckdb-blocks-history-capacity))
              (entry (aref org-duckdb-blocks-history-vector idx)))
         (when entry (push entry result))))))
 
-;; TODO finish documenting `org-duckdb-blocks-update-execution-status'
+;;;; Status Tracking
+
 (defun org-duckdb-blocks-update-execution-status (exec-id status &optional error-info)
-  "Update execution STATUS for EXEC-ID with optional ERROR-INFO."
+  "Update execution STATUS for EXEC-ID with optional ERROR-INFO.
+
+EXEC-ID is normalized before lookup.
+STATUS is a symbol: running, completed, cancelled, error, warning.
+ERROR-INFO is error description string (only for 'error status).
+
+Updates both `org-duckdb-blocks-execution-status' and the :status
+field in `org-duckdb-blocks-executions'.
+
+Called by ob-duckdb.el during execution lifecycle.
+Queried by `org-duckdb-blocks-get-execution-status'."
   (let ((exec-id (org-duckdb-blocks-normalize-id exec-id)))
     (puthash exec-id status org-duckdb-blocks-execution-status)
     (when-let ((exec-info (gethash exec-id org-duckdb-blocks-executions)))
@@ -181,14 +228,25 @@ the full executions hash table."
                            :error-info error-info)
                  org-duckdb-blocks-executions)))))
 
-;; TODO finish documenting `org-duckdb-blocks-get-execution-status'
 (defun org-duckdb-blocks-get-execution-status (exec-id)
-  "Get current status for EXEC-ID."
+  "Get current status for EXEC-ID.
+Returns status symbol or nil if not found.
+
+EXEC-ID is normalized before lookup.
+
+Also see `org-duckdb-blocks-update-execution-status' for status values."
   (gethash (org-duckdb-blocks-normalize-id exec-id) org-duckdb-blocks-execution-status))
 
-;; TODO finish documenting `org-duckdb-blocks-get-latest-exec-id-for-block'
 (defun org-duckdb-blocks-get-latest-exec-id-for-block (begin)
-  "Get the most recent execution ID for block at BEGIN position."
+  "Get most recent execution ID for block at BEGIN position.
+
+Scans `org-duckdb-blocks-executions' for executions at position BEGIN,
+returns ID of most recent by timestamp.
+
+Used by `org-babel-duckdb-cancel-current-execution' to find the
+execution to cancel.
+
+Returns execution ID string or nil if no executions found."
   (let ((latest-exec-id nil)
         (latest-time nil))
     (maphash (lambda (exec-id exec-info)
@@ -200,18 +258,64 @@ the full executions hash table."
              org-duckdb-blocks-executions)
     latest-exec-id))
 
-;;; Property Management
+(defun org-duckdb-blocks-store-process (exec-id process)
+  "Store PROCESS reference for EXEC-ID in execution info.
+
+Adds :process field to execution record in `org-duckdb-blocks-executions'.
+
+Used by async execution to enable cancellation via
+`org-duckdb-blocks-get-process'.
+
+Also see `org-babel-duckdb-execute-async' and
+`org-babel-duckdb-cancel-execution'."
+  (when-let ((exec-info (gethash exec-id org-duckdb-blocks-executions)))
+    (puthash exec-id
+             (plist-put exec-info :process process)
+             org-duckdb-blocks-executions)))
+
+(defun org-duckdb-blocks-get-process (exec-id)
+  "Get process for EXEC-ID, or nil if not found.
+
+Retrieves :process field from execution record in
+`org-duckdb-blocks-executions'.
+
+Used by `org-babel-duckdb-cancel-execution' to interrupt running queries.
+
+Returns process object or nil."
+  (when-let ((exec-info (gethash exec-id org-duckdb-blocks-executions)))
+    (plist-get exec-info :process)))
+
+(defun org-duckdb-blocks-get-running-executions ()
+  "Return list of execution IDs currently in 'running status.
+
+Scans `org-duckdb-blocks-executions' for executions with :status 'running.
+
+Used by `org-babel-duckdb-cancel-execution' for completion candidates.
+
+Also see `org-duckdb-blocks-update-execution-status'."
+  (let (running)
+    (maphash (lambda (exec-id exec-info)
+               (when (eq (plist-get exec-info :status) 'running)
+                 (push exec-id running)))
+             org-duckdb-blocks-executions)
+    running))
+
+;;;; Property Management
 
 (defun org-duckdb-blocks-update-properties (block-id exec-id begin)
-  "Update properties for block with BLOCK-ID and EXEC_ID at BEGIN.
-Inserts or updates #+PROPERTY: lines before the source block to maintain
-persistent identification across editing sessions. These properties are
-used to recover block identity after reopening files and to identify
-the most recent execution of each block.
+  "Update #+PROPERTY: lines for BLOCK-ID and EXEC-ID before block at BEGIN.
 
-Both IDs are normalized to prevent issues with text properties affecting
-string comparison operations. The properties are inserted directly before
-the source block, searching back a limited distance to find existing ones."
+Inserts or updates ID and EXEC_ID property lines before source block.
+These properties persist block identity across editing sessions and
+identify most recent execution.
+
+Both IDs are normalized to prevent text property issues.
+
+Properties are inserted at most 200 characters before BEGIN to avoid
+matching properties from other blocks.
+
+Called by `org-duckdb-blocks-register-execution'.
+Read by `org-duckdb-blocks-get-block-id'."
   (let ((block-id (org-duckdb-blocks-normalize-id block-id))
         (exec-id  (org-duckdb-blocks-normalize-id exec-id)))
     (save-excursion
@@ -240,57 +344,63 @@ the source block, searching back a limited distance to find existing ones."
         (end-of-line)
         (insert (format "\n#+PROPERTY: EXEC_ID %s" exec-id))))))
 
-;;; Block Registration and Management
-
 (defun org-duckdb-blocks-get-block-id (begin)
-  "Get block ID from properties for block at BEGIN, or nil if not found.
-Searches backward from BEGIN to find an ID property associated with the block.
-Returns a normalized (property-stripped) ID string if found, or nil otherwise.
-The search is limited to a reasonable distance to avoid matching properties
-from other blocks."
+  "Get block ID from properties near BEGIN, or nil if not found.
+
+Searches backward up to 200 characters for #+PROPERTY: ID line.
+Returns normalized ID string or nil.
+
+Used by `org-duckdb-blocks-register-execution' to reuse existing IDs.
+
+Also see `org-duckdb-blocks-update-properties' for ID insertion."
   (save-excursion
     (goto-char begin)
-    (when (re-search-backward "^#\\+PROPERTY: ID \\([a-f0-9-]+\\)" (max (- begin 200) (point-min)) t)
+    (when (re-search-backward "^#\\+PROPERTY: ID \\([a-f0-9-]+\\)"
+                             (max (- begin 200) (point-min)) t)
       (org-duckdb-blocks-normalize-id (match-string 1)))))
 
+;;;; Block Position Tracking
+
 (defun org-duckdb-blocks-update-all-block-positions ()
-  "Update positions of all tracked blocks and clean up stale entries.
-This comprehensive function synchronizes the registry with the
-current buffer state:
+  "Synchronize registry with current buffer state.
 
-1. Collects all blocks in current buffer with their IDs
-2. Updates coordinates for blocks that still have IDs
-3. Removes blocks from registry that are no longer in the buffer
-4. Identifies and removes duplicate block entries for the same position
+Updates positions for all tracked blocks in current buffer and removes
+stale entries. This critical function ensures registry accuracy as blocks
+are added, removed, or edited.
 
-This ensures the registry stays accurate as blocks are added, removed,
-or edited. It's called automatically before registering executions
-to maintain consistency."
+Procedure:
+1. Scan buffer for #+PROPERTY: ID markers
+2. Find associated source blocks
+3. Update coordinates in `org-duckdb-blocks-registry'
+4. Remove registry entries for blocks no longer in buffer
+5. Remove duplicate entries for same position
+
+Called by `org-duckdb-blocks-register-execution' before recording
+execution to ensure positions are accurate.
+
+Returns list of block IDs currently in buffer."
   (let ((file (buffer-file-name))
         (buffer (buffer-name))
-        ;; Map positions to block IDs to detect duplicates
         (found-blocks (make-hash-table :test 'equal))
-        ;; List of all block IDs found in this buffer
         (current-buffer-blocks nil))
 
-    ;; First pass: find blocks with IDs in the current buffer
+    ;; First pass: find blocks with IDs in current buffer
     (save-excursion
       (goto-char (point-min))
       (while (re-search-forward "^#\\+PROPERTY: ID \\([a-f0-9-]+\\)" nil t)
         (let ((block-id (org-duckdb-blocks-normalize-id (match-string 1))))
           (push block-id current-buffer-blocks)
 
-          ;; Find the associated source block
+          ;; Find associated source block
           (when (re-search-forward "^#\\+begin_src duckdb" nil t)
             (let* ((element (org-element-at-point))
                    (begin (org-element-property :begin element))
                    (end (org-element-property :end element)))
 
-              ;; Store position -> ID mapping
               (when (and begin end)
                 (puthash (cons begin end) block-id found-blocks)
 
-                ;; Update block coordinates in registry
+                ;; Update registry
                 (let* ((contents-begin (org-element-property :contents-begin element))
                        (contents-end (org-element-property :contents-end element))
                        (content (if (and contents-begin contents-end)
@@ -311,11 +421,10 @@ to maintain consistency."
                                    :file file
                                    :buffer buffer
                                    :content content)
-                             org-duckdb-blocks-registry))))))))
+                             org-duckdb-blocks-registry)))))))))
 
-    ;; Second pass: find blocks in registry that should be deleted
+    ;; Second pass: remove stale registry entries
     (let ((blocks-to-remove nil))
-      ;; Check each block in registry to see if it should be removed
       (maphash (lambda (block-id info)
                  (when (and (equal (plist-get info :buffer) buffer)
                             (equal (plist-get info :file) file))
@@ -323,44 +432,46 @@ to maintain consistency."
                           (end (plist-get info :end))
                           (pos-key (cons begin end))
                           (current-id (gethash pos-key found-blocks)))
-                     ;; Both current-id and block-id are plain
                      (when (or (not (member block-id current-buffer-blocks))
                                (and current-id (not (equal current-id block-id))))
                        (push block-id blocks-to-remove)))))
                org-duckdb-blocks-registry)
 
-      ;; Remove blocks that should be deleted
       (when blocks-to-remove
         (dolist (block-id blocks-to-remove)
           (message "[duckdb-blocks] Removing stale block %s from registry"
                    (substring block-id 0 8))
           (remhash block-id org-duckdb-blocks-registry)))
 
-    ;; Return the list of blocks currently in buffer
-    current-buffer-blocks))))
+      current-buffer-blocks)))
+
+;;;; Block Registration
 
 (defun org-duckdb-blocks-register-execution ()
-  "Register execution of the DuckDB block at point.
-This is the core function of the package, capturing the state of a
-DuckDB source block at the moment of execution. It:
+  "Register execution of DuckDB block at point.
 
-1. Identifies the source block and extracts its properties
-2. Updates the registry with current block positions
-3. Assigns a block ID (reusing existing one if available)
-4. Creates a new execution ID
-5. Records execution details and block content
-6. Updates the history buffer
-7. Inserts property markers in the document
+This is the core function capturing block state at execution time:
+1. Identifies source block and extracts properties
+2. Updates registry with current positions via
+   `org-duckdb-blocks-update-all-block-positions'
+3. Assigns block ID (reusing existing or generating new UUID)
+4. Creates execution ID
+5. Records execution details in `org-duckdb-blocks-executions'
+6. Updates `org-duckdb-blocks-history-vector'
+7. Inserts property markers via `org-duckdb-blocks-update-properties'
 
-Returns a plist with :block-id and :exec-id for other components
-to reference. This function is automatically called via advice
-before executing DuckDB source blocks."
+Returns plist with :block-id and :exec-id for ob-duckdb.el to reference.
+
+Called automatically via advice on `org-babel-execute-src-block' (see
+`org-duckdb-blocks-register-advice' and `org-duckdb-blocks-setup').
+
+For interactive use, see `org-duckdb-blocks-list' and
+`org-duckdb-blocks-recent' to view registered executions."
   (interactive)
   (let* ((el (org-element-at-point))
          (is-duckdb (and (eq (car el) 'src-block)
                          (string= (org-element-property :language el) "duckdb"))))
     (when is-duckdb
-      ;; --- PREP: Read current block properties ---
       (let* ((begin (org-element-property :begin el))
              (end (org-element-property :end el))
              (contents-begin (org-element-property :contents-begin el))
@@ -379,7 +490,7 @@ before executing DuckDB source blocks."
                            (count-lines (point-min) (point-max))))
              (name (org-element-property :name el)))
 
-        ;; --- 1. Find existing ID (either from property or by position) ---
+        ;; Find existing ID by position or property
         (let* ((existing-by-position nil)
                (existing-id nil))
           (maphash (lambda (id info)
@@ -394,23 +505,24 @@ before executing DuckDB source blocks."
           (setq existing-id (or (org-duckdb-blocks-get-block-id begin)
                                 existing-by-position))
 
-          ;; --- 2. Finalize IDs ---
+          ;; Finalize IDs
           (let* ((block-id (org-duckdb-blocks-normalize-id (or existing-id (org-id-uuid))))
                  (exec-id  (org-duckdb-blocks-normalize-id (org-id-uuid)))
                  (timestamp (current-time)))
-            ;; --- 3. Insert/Update property lines (may move the block!) ---
+            
+            ;; Insert/update properties (may move block)
             (org-duckdb-blocks-update-properties block-id exec-id begin)
 
-            ;; --- 4. FULLY RESCAN block positions in buffer ---
+            ;; Rescan buffer to get accurate positions after property insertion
             (org-duckdb-blocks-update-all-block-positions)
 
-            ;; --- 5. Lookup latest block info (positions are now correct) ---
+            ;; Get updated position
             (let ((block-info (gethash block-id org-duckdb-blocks-registry)))
-              ;; Defensive: if block-info not found, fallback to old values
               (let ((new-begin (or (plist-get block-info :begin) begin))
                     (new-end   (or (plist-get block-info :end) end))
                     (new-content (or (plist-get block-info :content) content)))
-                ;; --- 6. Store registry and history with correct positions ---
+                
+                ;; Update registry
                 (puthash block-id
                          (list :begin new-begin
                                :end new-end
@@ -419,6 +531,7 @@ before executing DuckDB source blocks."
                                :content new-content)
                          org-duckdb-blocks-registry)
 
+                ;; Record execution
                 (puthash exec-id
                          (list :block-id block-id
                                :begin new-begin
@@ -438,18 +551,24 @@ before executing DuckDB source blocks."
                          (substring exec-id 0 8))
                 (list :block-id block-id :exec-id exec-id)))))))))
 
-(defun org-duckdb-blocks-goto-block (id)
-  "Navigate to the DuckDB source block with ID.
-Finds and jumps to a source block in the registry by its ID.
-If the block is in another file, that file is opened.
-The cursor is positioned at the beginning of the block.
+;;;; Navigation Commands
 
-When called interactively, provides completion for all known block IDs."
+;;;###autoload
+(defun org-duckdb-blocks-goto-block (id)
+  "Navigate to DuckDB source block with ID.
+
+Finds block in `org-duckdb-blocks-registry', opens its file if needed,
+and positions cursor at block start.
+
+When interactive, provides completion for all known block IDs.
+
+Also see `org-duckdb-blocks-goto-execution' to navigate by execution ID
+and `org-duckdb-blocks-navigate-recent' for recent execution browser."
   (interactive
-   (list (let ((choice (completing-read "Block ID: " (hash-table-keys org-duckdb-blocks-registry))))
+   (list (let ((choice (completing-read "Block ID: "
+                                       (hash-table-keys org-duckdb-blocks-registry))))
            (org-duckdb-blocks-normalize-id choice))))
   (when-let* ((info (gethash (org-duckdb-blocks-normalize-id id) org-duckdb-blocks-registry)))
-    ;; Navigate to file/buffer
     (cond
      ((and (plist-get info :file) (file-exists-p (plist-get info :file)))
       (find-file (plist-get info :file)))
@@ -457,96 +576,53 @@ When called interactively, provides completion for all known block IDs."
       (switch-to-buffer (plist-get info :buffer)))
      (t (message "[duckdb-blocks] Source not found")))
 
-    ;; Position cursor
     (goto-char (plist-get info :begin))
     (recenter-top-bottom)))
 
+;;;###autoload
 (defun org-duckdb-blocks-goto-execution (exec-id)
   "Navigate to source block of execution EXEC-ID.
-Finds a specific execution in the history and jumps to its
-associated source block. This allows revisiting blocks based on
-their execution history rather than just their block ID.
 
-When called interactively, provides completion for all executions."
+Finds execution in `org-duckdb-blocks-executions', extracts block ID,
+and delegates to `org-duckdb-blocks-goto-block'.
+
+When interactive, provides completion for all execution IDs.
+
+Also see `org-duckdb-blocks-navigate-recent' for browsing recent
+executions with readable labels."
   (interactive
-   (list (let ((choice (completing-read "Execution ID: " (hash-table-keys org-duckdb-blocks-executions))))
+   (list (let ((choice (completing-read "Execution ID: "
+                                       (hash-table-keys org-duckdb-blocks-executions))))
            (org-duckdb-blocks-normalize-id choice))))
-  (when-let* ((exec-info (gethash (org-duckdb-blocks-normalize-id exec-id) org-duckdb-blocks-executions))
+  (when-let* ((exec-info (gethash (org-duckdb-blocks-normalize-id exec-id)
+                                 org-duckdb-blocks-executions))
               (block-id (plist-get exec-info :block-id)))
     (org-duckdb-blocks-goto-block block-id)))
 
-(defun org-duckdb-blocks-execution-info (exec-id)
-  "Display detailed information about the execution with EXEC-ID.
-Shows a comprehensive report of an execution in a help buffer, including:
-- Block identification and location
-- Execution timestamp
-- Source block parameters and state at execution time
-- Content executed
-
-This is useful for debugging and understanding past executions.
-When called interactively, provides completion for all executions."
-  (interactive
-   (list (let ((choice (completing-read "Execution ID: " (hash-table-keys org-duckdb-blocks-executions))))
-           (org-duckdb-blocks-normalize-id choice))))
-  (when-let* ((exec-info (gethash (org-duckdb-blocks-normalize-id exec-id) org-duckdb-blocks-executions))
-              (block-id (plist-get exec-info :block-id))
-              (block-info (gethash (org-duckdb-blocks-normalize-id block-id) org-duckdb-blocks-registry)))
-    (with-help-window "*DuckDB Execution Info*"
-      (princ (format "DuckDB Execution: %s\n" exec-id))
-      (princ "==========================\n\n")
-
-      ;; Block information
-      (princ (format "Block ID: %s\n" block-id))
-      (princ (format "File: %s\n" (or (plist-get block-info :file) "N/A")))
-      (princ (format "Buffer: %s\n" (or (plist-get block-info :buffer) "N/A")))
-      (when-let ((name (plist-get exec-info :name)))
-        (princ (format "Named Block: %s\n" name)))
-
-      ;; Timestamp
-      (princ (format "\nExecution Time: %s\n\n"
-                     (format-time-string "%Y-%m-%d %H:%M:%S.%3N"
-                                        (plist-get exec-info :time))))
-
-      ;; Source block state
-      (princ "=== SOURCE BLOCK STATE ===\n")
-      (when-let ((params (plist-get exec-info :parameters)))
-        (princ (format "Parameters: %s\n" params)))
-      (when-let ((header (plist-get exec-info :header)))
-        (princ (format "Header Arguments: %S\n" header)))
-      (when-let ((switches (plist-get exec-info :switches)))
-        (princ (format "Switches: %s\n" switches)))
-      (princ (format "Line Count: %d\n\n"
-                    (or (plist-get exec-info :line-count) 0)))
-
-      ;; Get content from execution info
-      (let ((content (plist-get exec-info :content)))
-        (princ "=== CONTENT ===\n")
-        (if (and content (not (string-empty-p content)))
-            (princ content)
-          (princ "[No content available]"))
-        (princ "\n")))))
-
+;;;###autoload
 (defun org-duckdb-blocks-navigate-recent ()
-  "Navigate through recent executions with completion.
-Presents an interactive list of recent executions with readable
-labels and allows jumping to any of them. This is the most convenient
-way to revisit recently executed blocks.
+  "Navigate to recent executions with completion.
 
-Labels include:
-- Timestamp of execution
+Presents list of recent executions with readable labels:
+- Timestamp
 - Block name or ID
-- Parameters used (if any)"
+- Parameters (if any)
+
+Retrieves executions via `org-duckdb-blocks-get-recent-history'.
+Most convenient way to revisit recent blocks.
+
+Also see `org-duckdb-blocks-recent' for detailed list view."
   (interactive)
   (let* ((recent (org-duckdb-blocks-get-recent-history 30))
          (options '())
          (selected nil))
 
-    ;; Build options with readable labels
     (dolist (entry recent)
       (let* ((exec-id (aref entry 0))
              (block-id (aref entry 1))
              (timestamp (aref entry 2))
-             (exec-info (gethash (org-duckdb-blocks-normalize-id exec-id) org-duckdb-blocks-executions))
+             (exec-info (gethash (org-duckdb-blocks-normalize-id exec-id)
+                                org-duckdb-blocks-executions))
              (time-str (format-time-string "%Y-%m-%d %H:%M:%S" timestamp))
              (params (plist-get exec-info :parameters))
              (label (format "[%s] %s %s"
@@ -562,63 +638,74 @@ Labels include:
       (when selected
         (org-duckdb-blocks-goto-execution selected)))))
 
-;;; System Setup and Utilities
+;;;; Reporting Commands
 
-(defun org-duckdb-blocks-register-advice (&rest _)
-  "Advice function that registers DuckDB block execution.
-This is added as :before advice to `org-babel-execute-src-block'
-to capture block state at the moment of execution.
+;;;###autoload
+(defun org-duckdb-blocks-execution-info (exec-id)
+  "Display detailed information about execution EXEC-ID.
 
-The function checks if we're in a DuckDB block and registers it
-if so. The registration info is used by async execution and
-history tracking. Arguments are ignored since we get context
-from point position."
-  (when (org-in-src-block-p)
-    (let* ((el (org-element-context))
-           ;; Force full element parse to ensure all properties are available
-           (el-full (org-element-at-point))
-           (is-duckdb (and (eq (car el) 'src-block)
-                          (string= (org-element-property :language el) "duckdb"))))
-      (when is-duckdb
-        (org-duckdb-blocks-register-execution)))))
+Shows in help buffer:
+- Block identification and location
+- Execution timestamp
+- Parameters and state at execution time
+- Executed content
 
-(defun org-duckdb-blocks-setup ()
-  "Initialize the DuckDB block tracking system.
-Adds advice to org-babel-execute-src-block to register executions.
-This is the main entry point for using this package and should be
-called once during initialization."
-  (interactive)
-  (unless (advice-member-p 'org-duckdb-blocks-register-advice 'org-babel-execute-src-block)
-    (advice-add 'org-babel-execute-src-block :before #'org-duckdb-blocks-register-advice)
-    (message "DuckDB block tracking activated")))
+When interactive, provides completion for all execution IDs.
 
-;; TODO improve documentation for `org-duckdb-blocks-clear'
-(defun org-duckdb-blocks-clear ()
-  "Reset all DuckDB block tracking data structures.
-Clears the registry, execution history, and circular buffer.
-This is useful for testing or if the tracking data becomes corrupted.
-Note that this does not remove ID properties from source blocks."
-  (interactive)
-  (clrhash org-duckdb-blocks-registry)
-  (clrhash org-duckdb-blocks-executions)
-  (clrhash org-duckdb-blocks-execution-status) ; NEW
-  (setq org-duckdb-blocks-history-vector (make-vector org-duckdb-blocks-history-capacity nil)
-        org-duckdb-blocks-history-index 0
-        org-duckdb-blocks-history-count 0)
-  (message "DuckDB block tracking data cleared"))
+Also see `org-duckdb-blocks-recent' for chronological list of executions."
+  (interactive
+   (list (let ((choice (completing-read "Execution ID: "
+                                       (hash-table-keys org-duckdb-blocks-executions))))
+           (org-duckdb-blocks-normalize-id choice))))
+  (when-let* ((exec-info (gethash (org-duckdb-blocks-normalize-id exec-id)
+                                 org-duckdb-blocks-executions))
+              (block-id (plist-get exec-info :block-id))
+              (block-info (gethash (org-duckdb-blocks-normalize-id block-id)
+                                  org-duckdb-blocks-registry)))
+    (with-help-window "*DuckDB Execution Info*"
+      (princ (format "DuckDB Execution: %s\n" exec-id))
+      (princ "==========================\n\n")
 
-;;; Reporting and Visualization
+      (princ (format "Block ID: %s\n" block-id))
+      (princ (format "File: %s\n" (or (plist-get block-info :file) "N/A")))
+      (princ (format "Buffer: %s\n" (or (plist-get block-info :buffer) "N/A")))
+      (when-let ((name (plist-get exec-info :name)))
+        (princ (format "Named Block: %s\n" name)))
 
+      (princ (format "\nExecution Time: %s\n\n"
+                     (format-time-string "%Y-%m-%d %H:%M:%S.%3N"
+                                        (plist-get exec-info :time))))
+
+      (princ "=== SOURCE BLOCK STATE ===\n")
+      (when-let ((params (plist-get exec-info :parameters)))
+        (princ (format "Parameters: %s\n" params)))
+      (when-let ((header (plist-get exec-info :header)))
+        (princ (format "Header Arguments: %S\n" header)))
+      (when-let ((switches (plist-get exec-info :switches)))
+        (princ (format "Switches: %s\n" switches)))
+      (princ (format "Line Count: %d\n\n"
+                    (or (plist-get exec-info :line-count) 0)))
+
+      (let ((content (plist-get exec-info :content)))
+        (princ "=== CONTENT ===\n")
+        (if (and content (not (string-empty-p content)))
+            (princ content)
+          (princ "[No content available]"))
+        (princ "\n")))))
+
+;;;###autoload
 (defun org-duckdb-blocks-list (&optional limit)
-  "Display tracked DuckDB blocks and their executions, up to LIMIT per block.
-Creates a formatted report in a help buffer showing all tracked blocks
-and their execution history. For each block, shows:
-- Block ID and location
-- Execution IDs with timestamps
-- Execution parameters
+  "Display tracked blocks and their executions, up to LIMIT per block.
 
-If LIMIT is provided, shows at most that many executions per block.
-Default limit is 10 executions per block."
+Shows for each block in `org-duckdb-blocks-registry':
+- Block ID and location
+- Execution history with timestamps
+- Parameters used
+
+LIMIT defaults to 10 executions per block.
+Use prefix argument to specify different limit.
+
+Also see `org-duckdb-blocks-recent' for chronological view across all blocks."
   (interactive "P")
   (let ((limit (or limit 10)))
     (with-help-window "*DuckDB Blocks*"
@@ -627,7 +714,6 @@ Default limit is 10 executions per block."
       (if (zerop (hash-table-count org-duckdb-blocks-registry))
           (princ "No blocks found.\n")
 
-        ;; Process each block
         (maphash
          (lambda (block-id info)
            (princ (format "Block ID: %s\n" block-id))
@@ -637,10 +723,10 @@ Default limit is 10 executions per block."
                           (plist-get info :begin)
                           (plist-get info :end)))
 
-           ;; Find and sort executions
            (let ((executions '()))
              (maphash (lambda (exec-id exec-info)
-                        (when (equal (org-duckdb-blocks-normalize-id block-id) (org-duckdb-blocks-normalize-id (plist-get exec-info :block-id)))
+                        (when (equal (org-duckdb-blocks-normalize-id block-id)
+                                    (org-duckdb-blocks-normalize-id (plist-get exec-info :block-id)))
                           (push (cons exec-id exec-info) executions)))
                       org-duckdb-blocks-executions)
              (let* ((sorted-execs
@@ -670,42 +756,21 @@ Default limit is 10 executions per block."
            (princ "\n"))
          org-duckdb-blocks-registry)))))
 
-;; TODO finish documenting `org-duckdb-blocks-store-process'
-(defun org-duckdb-blocks-store-process (exec-id process)
-  "Store PROCESS reference for EXEC-ID in execution info."
-  (when-let ((exec-info (gethash exec-id org-duckdb-blocks-executions)))
-    (puthash exec-id
-             (plist-put exec-info :process process)
-             org-duckdb-blocks-executions)))
-
-;; TODO finish documenting `org-duckdb-blocks-get-process'
-(defun org-duckdb-blocks-get-process (exec-id)
-  "Get process for EXEC-ID, or nil if not found or not running."
-  (when-let ((exec-info (gethash exec-id org-duckdb-blocks-executions)))
-    (plist-get exec-info :process)))
-
-;; TODO finish documenting `org-duckdb-blocks-get-running-executions'
-(defun org-duckdb-blocks-get-running-executions ()
-  "Return list of exec-ids currently in `running' status."
-  (let (running)
-    (maphash (lambda (exec-id exec-info)
-               (when (eq (plist-get exec-info :status) 'running)
-                 (push exec-id running)))
-             org-duckdb-blocks-executions)
-    running))
-
-
+;;;###autoload
 (defun org-duckdb-blocks-recent (&optional limit)
-  "Display recent DuckDB executions chronologically, up to LIMIT entries.
-Shows a chronological list of recent executions from newest to oldest.
-For each execution, displays:
+  "Display recent executions chronologically, up to LIMIT entries.
+
+Shows for each execution:
 - Timestamp
 - Block ID or name
 - File and buffer location
-- Parameters used
+- Parameters
 
-This provides a time-based view of DuckDB activity across all files.
-Default limit is 10 executions."
+Provides time-based view across all files.
+LIMIT defaults to 10 executions.
+
+Retrieved via `org-duckdb-blocks-get-recent-history'.
+Also see `org-duckdb-blocks-navigate-recent' for interactive navigation."
   (interactive "P")
   (let ((limit (or limit 10)))
     (with-help-window "*Recent DuckDB Executions*"
@@ -717,8 +782,10 @@ Default limit is 10 executions."
             (let* ((exec-id (aref entry 0))
                    (block-id (aref entry 1))
                    (timestamp (aref entry 2))
-                   (exec-info (gethash (org-duckdb-blocks-normalize-id exec-id) org-duckdb-blocks-executions))
-                   (block-info (gethash (org-duckdb-blocks-normalize-id block-id) org-duckdb-blocks-registry)))
+                   (exec-info (gethash (org-duckdb-blocks-normalize-id exec-id)
+                                      org-duckdb-blocks-executions))
+                   (block-info (gethash (org-duckdb-blocks-normalize-id block-id)
+                                       org-duckdb-blocks-registry)))
 
               (princ (format "[%s] Block: %s\n"
                              (format-time-string "%Y-%m-%d %H:%M:%S.%3N" timestamp)
@@ -730,7 +797,6 @@ Default limit is 10 executions."
                 (princ (format "    File: %s\n" (or (plist-get block-info :file) "N/A")))
                 (princ (format "    Buffer: %s\n" (or (plist-get block-info :buffer) "N/A"))))
 
-              ;; Add parameter information if available
               (when-let ((params (plist-get exec-info :parameters)))
                 (princ (format "    Parameters: %s\n" params)))
               (when-let ((header (plist-get exec-info :header)))
@@ -740,9 +806,21 @@ Default limit is 10 executions."
 
               (princ "\n"))))))))
 
-;; TODO finish documenting `org-duckdb-blocks-show-execution-status'
+;;;###autoload
 (defun org-duckdb-blocks-show-execution-status ()
-  "Show status of all recent executions with their states."
+  "Show status of recent executions with their states.
+
+Displays status for recent executions from `org-duckdb-blocks-get-recent-history'.
+Status values from `org-duckdb-blocks-execution-status':
+- running: Query executing
+- completed: Finished successfully
+- error: Failed with error
+- cancelled: User cancelled
+- warning: Completed with warnings
+
+Also shows error info if status is 'error.
+
+Also see `org-duckdb-blocks-update-execution-status' for how status is set."
   (interactive)
   (with-help-window "*DuckDB Execution Status*"
     (princ "DuckDB Execution Status\n")
@@ -769,6 +847,63 @@ Default limit is 10 executions."
                              (if (> (length error-info) 60)
                                  (concat (substring error-info 0 57) "...")
                                error-info))))))))))
+
+;;;; System Setup and Utilities
+
+(defun org-duckdb-blocks-register-advice (&rest _)
+  "Advice function registering DuckDB block execution.
+
+Added as :before advice to `org-babel-execute-src-block' by
+`org-duckdb-blocks-setup'.
+
+Checks if point is in DuckDB block and calls
+`org-duckdb-blocks-register-execution' if so.
+
+Arguments ignored - context from point position."
+  (when (org-in-src-block-p)
+    (let* ((el (org-element-context))
+           (el-full (org-element-at-point))
+           (is-duckdb (and (eq (car el) 'src-block)
+                          (string= (org-element-property :language el) "duckdb"))))
+      (when is-duckdb
+        (org-duckdb-blocks-register-execution)))))
+
+;;;###autoload
+(defun org-duckdb-blocks-setup ()
+  "Initialize DuckDB block tracking system.
+
+Adds advice to `org-babel-execute-src-block' to register executions.
+Safe to call multiple times (checks if advice already present).
+
+Main entry point for using this package.
+Called automatically by ob-duckdb.el."
+  (interactive)
+  (unless (advice-member-p 'org-duckdb-blocks-register-advice 'org-babel-execute-src-block)
+    (advice-add 'org-babel-execute-src-block :before #'org-duckdb-blocks-register-advice)
+    (message "DuckDB block tracking activated")))
+
+;;;###autoload
+(defun org-duckdb-blocks-clear ()
+  "Reset all DuckDB block tracking data.
+
+Clears:
+- `org-duckdb-blocks-registry'
+- `org-duckdb-blocks-executions'
+- `org-duckdb-blocks-execution-status'
+- `org-duckdb-blocks-history-vector'
+
+Useful for testing or if tracking data becomes corrupted.
+Does not remove #+PROPERTY: lines from source blocks.
+
+To restart tracking, call `org-duckdb-blocks-setup'."
+  (interactive)
+  (clrhash org-duckdb-blocks-registry)
+  (clrhash org-duckdb-blocks-executions)
+  (clrhash org-duckdb-blocks-execution-status)
+  (setq org-duckdb-blocks-history-vector (make-vector org-duckdb-blocks-history-capacity nil)
+        org-duckdb-blocks-history-index 0
+        org-duckdb-blocks-history-count 0)
+  (message "DuckDB block tracking data cleared"))
 
 (provide 'org-duckdb-blocks)
 
