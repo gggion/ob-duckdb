@@ -53,6 +53,49 @@
 (require 'org-element)
 (require 'org-macs)
 (require 'org-id)
+;;;; Customizable vars
+(defcustom org-duckdb-blocks-enable-tracking nil
+  "Enable execution history and block tracking for debugging.
+
+When nil, ob-duckdb works with minimal state - only tracks pending
+async executions until completion via `org-babel-duckdb--pending-async'.
+
+When non-nil, enables full debugging features:
+- Execution history via `org-duckdb-blocks-executions'
+- Block registry via `org-duckdb-blocks-registry'
+- Navigation commands (`org-duckdb-blocks-navigate-recent')
+- Cancellation support (`org-babel-duckdb-cancel-execution')
+
+Enabling tracking also controls property insertion via
+`org-duckdb-blocks-visible-properties'.
+
+Default is nil for minimal intrusion.
+
+Also see `org-duckdb-blocks-setup' to initialize tracking and
+Info node `(org-babel-duckdb) Block Tracking' for usage."
+  :type 'boolean
+  :group 'org-babel-duckdb
+  :package-version '(ob-duckdb . "2.0.0"))
+
+(defcustom org-duckdb-blocks-visible-properties nil
+  "Show block/exec IDs as visible #+PROPERTY: lines.
+
+When nil (default), stores IDs as invisible text properties to avoid
+document clutter.
+
+When non-nil, inserts visible #+PROPERTY: ID and #+PROPERTY: EXEC_ID
+lines before source blocks for inspection and debugging.
+
+Only relevant when `org-duckdb-blocks-enable-tracking' is non-nil.
+
+Text property storage enables full tracking features without polluting
+document source.
+
+Also see `org-duckdb-blocks-update-properties' for property insertion
+and Info node `(org-babel-duckdb) Property Storage' for details."
+  :type 'boolean
+  :group 'org-babel-duckdb
+  :package-version '(ob-duckdb . "2.0.0"))
 
 ;;;; Utility Functions
 
@@ -300,7 +343,44 @@ Also see `org-duckdb-blocks-update-execution-status'."
              org-duckdb-blocks-executions)
     running))
 
+
 ;;;; Property Management
+(defun org-duckdb-blocks--store-id (block-id exec-id begin)
+  "Store BLOCK-ID and EXEC-ID for block at BEGIN position.
+
+Storage method depends on `org-duckdb-blocks-visible-properties':
+
+When nil (default):
+  Stores IDs as invisible text properties on block start line.
+  Properties: org-duckdb-block-id, org-duckdb-exec-id.
+
+When non-nil:
+  Inserts visible #+PROPERTY: lines before source block.
+
+BEGIN is marker or position of source block start.
+
+Only called when `org-duckdb-blocks-enable-tracking' is non-nil.
+
+Text properties move with text during edits and don't clutter source.
+Visible properties enable inspection but pollute document.
+
+Also see `org-duckdb-blocks-get-block-id' for retrieval and
+`org-duckdb-blocks-update-properties' for legacy visible storage."
+  (save-excursion
+    (goto-char begin)
+    (if org-duckdb-blocks-visible-properties
+        ;; Visible property lines
+        (org-duckdb-blocks-update-properties block-id exec-id begin)
+      
+      ;; Invisible text properties
+      (let ((line-start (line-beginning-position))
+            (line-end (line-end-position)))
+        (put-text-property line-start line-end 
+                           'org-duckdb-block-id 
+                           (org-duckdb-blocks-normalize-id block-id))
+        (put-text-property line-start line-end 
+                           'org-duckdb-exec-id 
+                           (org-duckdb-blocks-normalize-id exec-id))))))
 
 (defun org-duckdb-blocks-update-properties (block-id exec-id begin)
   "Update #+PROPERTY: lines for BLOCK-ID and EXEC-ID before block at BEGIN.
@@ -347,17 +427,29 @@ Read by `org-duckdb-blocks-get-block-id'."
 (defun org-duckdb-blocks-get-block-id (begin)
   "Get block ID from properties near BEGIN, or nil if not found.
 
-Searches backward up to 200 characters for #+PROPERTY: ID line.
+Retrieval strategy depends on storage method:
+
+1. Check invisible text properties (fast, default)
+2. Search backward for visible #+PROPERTY: ID line (legacy)
+
+BEGIN is position of source block start.
+
 Returns normalized ID string or nil.
 
 Used by `org-duckdb-blocks-register-execution' to reuse existing IDs.
 
-Also see `org-duckdb-blocks-update-properties' for ID insertion."
+Also see `org-duckdb-blocks--store-id' for storage and
+`org-duckdb-blocks-visible-properties' for storage mode."
   (save-excursion
     (goto-char begin)
-    (when (re-search-backward "^#\\+PROPERTY: ID \\([a-f0-9-]+\\)"
-                             (max (- begin 200) (point-min)) t)
-      (org-duckdb-blocks-normalize-id (match-string 1)))))
+    (or
+     ;; Fast path: text property
+     (get-text-property (line-beginning-position) 'org-duckdb-block-id)
+     
+     ;; Fallback: visible property line
+     (when (re-search-backward "^#\\+PROPERTY: ID \\([a-f0-9-]+\\)"
+                               (max (- begin 200) (point-min)) t)
+       (org-duckdb-blocks-normalize-id (match-string 1))))))
 
 ;;;; Block Position Tracking
 
@@ -445,111 +537,124 @@ Returns list of block IDs currently in buffer."
 
       current-buffer-blocks)))
 
+(defun org-duckdb-blocks-get-block-location (exec-id)
+  "Get (BUFFER . MARKER) location for execution EXEC-ID.
+
+Looks up execution in `org-duckdb-blocks-executions' to find block-id,
+then queries `org-duckdb-blocks-registry' for current location.
+
+Returns cons cell (BUFFER . MARKER) or nil if not found.
+
+Only works when `org-duckdb-blocks-enable-tracking' is enabled.
+
+Used as fallback by `org-babel-duckdb--find-result-location' when
+placeholder-based routing fails.
+
+Also see `org-duckdb-blocks-register-execution' for registration and
+`org-babel-duckdb--mark-async-placeholder' for primary routing."
+  (when-let* ((exec-info (gethash (org-duckdb-blocks-normalize-id exec-id)
+                                 org-duckdb-blocks-executions))
+              (block-id (plist-get exec-info :block-id))
+              (block-info (gethash (org-duckdb-blocks-normalize-id block-id)
+                                  org-duckdb-blocks-registry))
+              (buffer-name (plist-get block-info :buffer))
+              (file (plist-get block-info :file))
+              (begin (plist-get block-info :begin))
+              (buffer (or (and file (file-exists-p file) 
+                               (find-file-noselect file))
+                          (get-buffer buffer-name))))
+    (cons buffer (with-current-buffer buffer
+                   (save-excursion
+                     (goto-char begin)
+                     (point-marker))))))
+
 ;;;; Block Registration
 
 (defun org-duckdb-blocks-register-execution ()
-  "Register execution of DuckDB block at point.
+  "Register execution of DuckDB block at point if tracking enabled.
 
-This is the core function capturing block state at execution time:
+Only performs registration when `org-duckdb-blocks-enable-tracking'
+is non-nil. When disabled, returns nil immediately.
+
+When enabled, this is the core function capturing block state:
 1. Identifies source block and extracts properties
-2. Updates registry with current positions via
-   `org-duckdb-blocks-update-all-block-positions'
+2. Updates registry with current positions
 3. Assigns block ID (reusing existing or generating new UUID)
 4. Creates execution ID
 5. Records execution details in `org-duckdb-blocks-executions'
 6. Updates `org-duckdb-blocks-history-vector'
-7. Inserts property markers via `org-duckdb-blocks-update-properties'
+7. Stores IDs via `org-duckdb-blocks--store-id'
 
-Returns plist with :block-id and :exec-id for ob-duckdb.el to reference.
+Returns plist with :block-id and :exec-id for ob-duckdb.el, or nil
+if tracking disabled.
 
-Called automatically via advice on `org-babel-execute-src-block' (see
-`org-duckdb-blocks-register-advice' and `org-duckdb-blocks-setup').
+Called by `org-babel-execute:duckdb' when tracking enabled.
 
 For interactive use, see `org-duckdb-blocks-list' and
 `org-duckdb-blocks-recent' to view registered executions."
-  (interactive)
-  (let* ((el (org-element-at-point))
-         (is-duckdb (and (eq (car el) 'src-block)
-                         (string= (org-element-property :language el) "duckdb"))))
-    (when is-duckdb
-      (let* ((begin (org-element-property :begin el))
-             (end (org-element-property :end el))
-             (contents-begin (org-element-property :contents-begin el))
-             (contents-end (org-element-property :contents-end el))
-             (content (or (org-element-property :value el)
-                          (and contents-begin contents-end
-                               (buffer-substring-no-properties contents-begin contents-end))
-                          ""))
-             (file (buffer-file-name))
-             (buffer (buffer-name))
-             (parameters (org-element-property :parameters el))
-             (header (org-element-property :header el))
-             (switches (org-element-property :switches el))
-             (line-count (with-temp-buffer
-                           (insert content)
-                           (count-lines (point-min) (point-max))))
-             (name (org-element-property :name el)))
+  (when (and (boundp 'org-duckdb-blocks-enable-tracking)
+             org-duckdb-blocks-enable-tracking)
+    (let* ((el (org-element-at-point))
+           (is-duckdb (and (eq (car el) 'src-block)
+                           (string= (org-element-property :language el) "duckdb"))))
+      (when is-duckdb
+        (let* ((begin (org-element-property :begin el))
+               (end (org-element-property :end el))
+               (contents-begin (org-element-property :contents-begin el))
+               (contents-end (org-element-property :contents-end el))
+               (content (or (org-element-property :value el)
+                            (and contents-begin contents-end
+                                 (buffer-substring-no-properties contents-begin contents-end))
+                            ""))
+               (file (buffer-file-name))
+               (buffer (buffer-name))
+               (parameters (org-element-property :parameters el))
+               (header (org-element-property :header el))
+               (switches (org-element-property :switches el))
+               (line-count (with-temp-buffer
+                             (insert content)
+                             (count-lines (point-min) (point-max))))
+               (name (org-element-property :name el)))
 
-        ;; Find existing ID by position or property
-        (let* ((existing-by-position nil)
-               (existing-id nil))
-          (maphash (lambda (id info)
-                     (when (and (not existing-by-position)
-                                (equal (plist-get info :begin) begin)
-                                (equal (plist-get info :end) end)
-                                (equal (plist-get info :buffer) buffer)
-                                (equal (plist-get info :file) file))
-                       (setq existing-by-position id)))
-                   org-duckdb-blocks-registry)
-
-          (setq existing-id (or (org-duckdb-blocks-get-block-id begin)
-                                existing-by-position))
-
-          ;; Finalize IDs
-          (let* ((block-id (org-duckdb-blocks-normalize-id (or existing-id (org-id-uuid))))
-                 (exec-id  (org-duckdb-blocks-normalize-id (org-id-uuid)))
+          ;; Find existing ID
+          (let* ((existing-id (org-duckdb-blocks-get-block-id begin))
+                 (block-id (org-duckdb-blocks-normalize-id 
+                            (or existing-id (org-id-uuid))))
+                 (exec-id (org-duckdb-blocks-normalize-id (org-id-uuid)))
                  (timestamp (current-time)))
             
-            ;; Insert/update properties (may move block)
-            (org-duckdb-blocks-update-properties block-id exec-id begin)
+            ;; Store IDs
+            (org-duckdb-blocks--store-id block-id exec-id begin)
 
-            ;; Rescan buffer to get accurate positions after property insertion
-            (org-duckdb-blocks-update-all-block-positions)
+            ;; Update registry
+            (puthash block-id
+                     (list :begin begin
+                           :end end
+                           :file file
+                           :buffer buffer
+                           :content content)
+                     org-duckdb-blocks-registry)
 
-            ;; Get updated position
-            (let ((block-info (gethash block-id org-duckdb-blocks-registry)))
-              (let ((new-begin (or (plist-get block-info :begin) begin))
-                    (new-end   (or (plist-get block-info :end) end))
-                    (new-content (or (plist-get block-info :content) content)))
-                
-                ;; Update registry
-                (puthash block-id
-                         (list :begin new-begin
-                               :end new-end
-                               :file file
-                               :buffer buffer
-                               :content new-content)
-                         org-duckdb-blocks-registry)
+            ;; Record execution
+            (puthash exec-id
+                     (list :block-id block-id
+                           :begin begin
+                           :time timestamp
+                           :content content
+                           :parameters parameters
+                           :header header
+                           :switches switches
+                           :line-count line-count
+                           :name name)
+                     org-duckdb-blocks-executions)
 
-                ;; Record execution
-                (puthash exec-id
-                         (list :block-id block-id
-                               :begin new-begin
-                               :time timestamp
-                               :content new-content
-                               :parameters parameters
-                               :header header
-                               :switches switches
-                               :line-count line-count
-                               :name name)
-                         org-duckdb-blocks-executions)
+            (org-duckdb-blocks-add-to-history exec-id block-id timestamp)
 
-                (org-duckdb-blocks-add-to-history exec-id block-id timestamp)
-
-                (message "[duckdb-blocks] Registered block %s execution %s"
-                         (substring block-id 0 8)
-                         (substring exec-id 0 8))
-                (list :block-id block-id :exec-id exec-id)))))))))
+            (message "[duckdb-blocks] Registered block %s execution %s"
+                     (substring block-id 0 8)
+                     (substring exec-id 0 8))
+            
+            (list :block-id block-id :exec-id exec-id)))))))
 
 ;;;; Navigation Commands
 
@@ -818,7 +923,7 @@ Status values from `org-duckdb-blocks-execution-status':
 - cancelled: User cancelled
 - warning: Completed with warnings
 
-Also shows error info if status is 'error.
+Also shows error info if status is `error.
 
 Also see `org-duckdb-blocks-update-execution-status' for how status is set."
   (interactive)
@@ -870,17 +975,32 @@ Arguments ignored - context from point position."
 
 ;;;###autoload
 (defun org-duckdb-blocks-setup ()
-  "Initialize DuckDB block tracking system.
+  "Initialize DuckDB block tracking system if enabled.
 
-Adds advice to `org-babel-execute-src-block' to register executions.
-Safe to call multiple times (checks if advice already present).
+Only activates when `org-duckdb-blocks-enable-tracking' is non-nil.
+
+When enabled, adds advice to `org-babel-execute-src-block' to register
+executions. Safe to call multiple times (checks if advice already present).
+
+When disabled, block tracking remains inactive and ob-duckdb.el uses
+minimal state for async routing only.
+
+To enable full tracking:
+  (setq org-duckdb-blocks-enable-tracking t)
+  (org-duckdb-blocks-setup)
 
 Main entry point for using this package.
-Called automatically by ob-duckdb.el."
+Called automatically by ob-duckdb.el on load."
   (interactive)
-  (unless (advice-member-p 'org-duckdb-blocks-register-advice 'org-babel-execute-src-block)
-    (advice-add 'org-babel-execute-src-block :before #'org-duckdb-blocks-register-advice)
-    (message "DuckDB block tracking activated")))
+  (if (and (boundp 'org-duckdb-blocks-enable-tracking)
+           org-duckdb-blocks-enable-tracking)
+      (progn
+        (unless (advice-member-p 'org-duckdb-blocks-register-advice 
+                                'org-babel-execute-src-block)
+          (advice-add 'org-babel-execute-src-block :before 
+                      #'org-duckdb-blocks-register-advice)
+          (message "DuckDB block tracking activated")))
+    (message "DuckDB block tracking disabled (set org-duckdb-blocks-enable-tracking to enable)")))
 
 ;;;###autoload
 (defun org-duckdb-blocks-clear ()
