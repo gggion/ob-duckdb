@@ -44,6 +44,28 @@
 ;; - DuckDB dot commands for configuration
 ;; - Automatic result truncation for large outputs
 ;; - Progress monitoring for long-running queries
+;; - FIFO queue for multiple async executions per session
+;;
+;; Block tracking is optional and disabled by default:
+;;
+;;     ;; Minimal mode (default) - only async execution tracking
+;;     (require 'ob-duckdb)
+;;
+;;     ;; Full tracking mode - execution history and debugging
+;;     (setq org-duckdb-blocks-enable-tracking t
+;;           org-duckdb-blocks-visible-properties nil) ; invisible by default
+;;     (org-duckdb-blocks-setup)
+;;
+;; With tracking disabled, async executions still work correctly via
+;; exec-id embedded in result placeholders. Full tracking adds:
+;; - Execution history (`org-duckdb-blocks-recent')
+;; - Block registry (`org-duckdb-blocks-list')
+;; - Navigation commands (`org-duckdb-blocks-navigate-recent')
+;; - Enhanced cancellation support
+;;
+;; Property storage modes (only when tracking enabled):
+;; - Invisible (default): Text properties, no document pollution
+;; - Visible: #+PROPERTY: lines for inspection
 ;;
 ;; For complete documentation, see Info node `(ob-duckdb) Top' (IN PROGRESS)
 ;; or visit <https://github.com/gggion/ob-duckdb>
@@ -51,13 +73,14 @@
 ;; Key commands:
 ;; - `org-babel-duckdb-create-session' - Start a session
 ;; - `org-babel-duckdb-display-sessions' - Show active sessions
-;; - `org-babel-duckdb-cancel-current-execution' - Cancel running query
+;; - `org-babel-duckdb-show-queue' - Monitor async execution queue
+;; - `org-babel-duckdb-cancel-execution' - Cancel async execution in queue
 
 ;;; Code:
 
 (require 'ob)
 (require 'ansi-color)
-(require 'org-duckdb-blocks)
+;; (require 'org-duckdb-blocks)
 
 (defvar org-babel-default-header-args:duckdb
   '((:results . "output")
@@ -77,6 +100,7 @@ Also see `org-babel-header-args:duckdb' for DuckDB-specific arguments.")
     (separator . :any)
     (echo      . :any)
     (bail      . :any)
+    (session   . :any)
     (async     . :any)
     (output    . :any)
     (max-rows  . :any))
@@ -86,7 +110,6 @@ See Info node `(org-babel-duckdb) Header Arguments' for specifications.
 For standard Org Babel arguments, see Info node `(org) Using Header Arguments'.")
 
 ;;;; Customization Group and User Options
-
 (defgroup org-babel-duckdb nil
   "Org Babel support for DuckDB analytical queries."
   :group 'org-babel
@@ -112,38 +135,24 @@ Used by `org-babel-duckdb-execute-sync' for direct invocation and
   "Buffer name for query results when :output buffer is used.
 
 See `org-babel-duckdb-display-buffer' for display behavior and
-`org-babel-duckdb-process-and-update-result' for when this is used."
+`org-babel-duckdb--insert-result-at-point' for when this is used."
   :type 'string
   :group 'org-babel-duckdb
   :package-version '(ob-duckdb . "1.0.0"))
 
-(defcustom org-babel-duckdb-prompt-char "🦆"
+(defcustom org-babel-duckdb-prompt-char "⬤◗"
   "Character used as DuckDB prompt in session buffers.
 Must be unique enough not to appear in query results, as all occurrences
 are removed from output by `org-babel-duckdb-clean-output'.
 
--Examples of good prompt characters:
--- \"🦆\"  (default)
--- \"⬤➤\"
--- \"⬤◗\"
--- \"D>\"
+Examples of good prompt characters:
+  \"🦆\"
+  \"⬤➤\"
+  \"⬤◗\"  (default)
+  \"D>\"
 
 Set by `org-babel-duckdb-initiate-session' when creating sessions."
   :type 'string
-  :group 'org-babel-duckdb
-  :package-version '(ob-duckdb . "1.0.0"))
-
-(defcustom org-babel-duckdb-show-progress t
-  "Whether to show status indicators during asynchronous execution.
-
-When non-nil, async queries display a status buffer showing execution
-activity via `org-babel-duckdb-create-progress-monitor'.
-
-The buffer auto-closes 3 seconds after completion (see
-`org-babel-duckdb-cleanup-progress-display').
-
-Only applies to async execution (see `org-babel-duckdb-execute-async')."
-  :type 'boolean
   :group 'org-babel-duckdb
   :package-version '(ob-duckdb . "1.0.0"))
 
@@ -157,7 +166,7 @@ Can be overridden per-block with :max-rows header argument.
 
 Truncation is applied by `org-babel-duckdb-read-file-lines' during
 result processing. For async execution behavior, see
-`org-babel-duckdb-async-sentinel'.
+`org-babel-duckdb--make-completion-handler'.
 
 Performance implications:
 - Below 50k lines: Negligible overhead
@@ -169,12 +178,112 @@ Also see `org-babel-duckdb-output-buffer' for alternative result display."
                  (const :tag "No limit (may freeze Emacs)" nil))
   :group 'org-babel-duckdb
   :link '(info-link "(org-babel-duckdb) Result Handling")
-  :package-version '(ob-duckdb . "1.0.0"))
+  :package-version '(ob-duckdb . "2.0.0"))
+
+;;;;; Progress Tracking and Display Options
+
+(defcustom org-babel-duckdb-show-progress t
+  "Whether to show status indicators during asynchronous execution.
+
+When non-nil, async queries display status via
+`org-babel-duckdb-create-progress-monitor'.
+
+Display method controlled by `org-babel-duckdb-progress-display'.
+
+Only applies to async execution (see `org-babel-duckdb-execute-async')."
+  :type 'boolean
+  :group 'org-babel-duckdb
+  :package-version '(ob-duckdb . "2.0.0"))
+
+(defcustom org-babel-duckdb-progress-display 'minibuffer
+  "How to display progress during async execution.
+
+Values:
+  popup      - Dedicated buffer in side window
+  minibuffer - One-time message in minibuffer (default)
+  nil        - No progress display
+
+When `popup, creates live-updating buffer showing execution progress.
+Progress popups auto-close 3 seconds after completion.
+
+When `minibuffer, shows initial execution message and completion message.
+
+Independent of queue display (see `org-babel-duckdb-queue-display').
+
+Only active when `org-babel-duckdb-show-progress' is non-nil."
+  :type '(choice (const :tag "Popup buffer" popup)
+                 (const :tag "Minibuffer message" minibuffer)
+                 (const :tag "No progress display" nil))
+  :group 'org-babel-duckdb
+  :package-version '(ob-duckdb . "2.0.0"))
+
+(defcustom org-babel-duckdb-queue-display 'auto
+  "How to display async execution queue.
+
+Values:
+  manual - Show queue only when `org-babel-duckdb-show-queue' called
+  auto   - Auto-show queue when multiple executions pending (default)
+
+When `auto, queue buffer appears automatically when second async
+execution starts in same session, and closes when queue empties.
+
+When `manual, call `org-babel-duckdb-show-queue' explicitly to monitor.
+
+Queue position controlled by `org-babel-duckdb-queue-position'.
+
+Also see `org-babel-duckdb-progress-display' for per-execution feedback."
+  :type '(choice (const :tag "Manual display only" manual)
+                 (const :tag "Auto-show on queue" auto))
+  :group 'org-babel-duckdb
+  :package-version '(ob-duckdb . "2.0.0"))
+
+(defcustom org-babel-duckdb-queue-position 'bottom
+  "Where to display queue monitor buffer.
+
+Values:
+  bottom - Bottom side window (default)
+  side   - Right side window
+
+Applies to both auto-display and manual `org-babel-duckdb-show-queue'.
+
+Window height (bottom) or width (side) is 25% of frame.
+
+Also see `org-babel-duckdb-queue-display' for display triggering."
+  :type '(choice (const :tag "Bottom panel" bottom)
+                 (const :tag "Side panel" side))
+  :group 'org-babel-duckdb
+  :package-version '(ob-duckdb . "2.0.0"))
 
 ;;;; Internal Variables
+(defvar-local org-babel-duckdb-session-db-file nil
+  "Database file path for current DuckDB session buffer.
+
+Nil indicates an in-memory database.
+Set by `org-babel-duckdb-initiate-session' during session creation.
+Queried by `org-babel-duckdb-display-sessions' for display.
+
+This is a buffer-local variable; each session buffer has its own value.")
+
+(defvar org-babel-duckdb--pending-async (make-hash-table :test 'equal)
+  "Maps exec-id to (buffer . marker) for async result routing.
+
+Keys are execution ID strings (UUIDs).
+Values are cons cells (BUFFER . MARKER) where:
+  BUFFER - Buffer containing the source block
+  MARKER - Marker at result insertion point
+
+This table provides essential routing for async executions without
+requiring full block tracking. Entries are removed after completion.
+
+Populated during async execution in `org-babel-execute:duckdb'.
+Queried by `org-babel-duckdb--find-result-location'.
+
+For full execution history and debugging, enable
+`org-duckdb-blocks-enable-tracking'.")
 
 (defvar org-babel-duckdb-sessions (make-hash-table :test 'equal)
   "Hash table of active DuckDB session buffers.
+
 Keys are session names (strings), values are buffer objects.
 
 Managed by `org-babel-duckdb-initiate-session',
@@ -183,29 +292,511 @@ Managed by `org-babel-duckdb-initiate-session',
 
 Query with `org-babel-duckdb-list-sessions'.")
 
-(defvar org-babel-duckdb-last-registration nil
-  "Most recent block registration info from org-duckdb-blocks.
-
-Plist with :block-id and :exec-id for routing async results.
-Set by `org-babel-duckdb-capture-registration-advice', consumed by
-`org-babel-execute:duckdb', then reset to nil.
-
-Part of the communication channel between `org-duckdb-blocks-register-execution'
-and execution functions.")
-
 (defvar org-babel-duckdb-progress-buffers (make-hash-table :test 'equal)
   "Hash table tracking progress display buffers by execution ID.
+
 Keys are execution IDs (UUID strings), values are buffer objects.
 
 Managed by `org-babel-duckdb-create-progress-monitor' and
 `org-babel-duckdb-cleanup-progress-display'.
 
-Only populated when `org-babel-duckdb-show-progress' is non-nil.")
+Only populated when `org-babel-duckdb-show-progress' is non-nil and
+`org-babel-duckdb-progress-display' is `popup.")
+
+(defvar org-babel-duckdb--session-queues (make-hash-table :test 'equal)
+  "Maps session names to queue structures for FIFO async execution.
+
+Keys are session name strings.
+Values are plists with:
+  :pending              - List of exec-id strings awaiting completion
+  :completion-handlers  - Hash table mapping exec-id to callback functions
+  :send-data            - Hash table mapping exec-id to command strings
+  :temp-err-files       - Hash table mapping exec-id to error file paths
+  :original-filter      - Original process filter to restore when queue empties
+
+Enables multiple async executions in same session with strict FIFO ordering.
+Only first pending execution runs at a time; completion triggers next.
+
+Managed by `org-babel-duckdb--enqueue-execution',
+`org-babel-duckdb--dequeue-execution', and
+`org-babel-duckdb--session-output-filter'.")
+
+(defvar org-babel-duckdb--queue-buffer nil
+  "Buffer object for live queue monitoring display.
+
+Nil when queue monitor is not active.
+Set by `org-babel-duckdb-show-queue' when creating monitor.
+Cleared when buffer is killed or all queues empty.
+
+The buffer auto-refreshes every 0.5 seconds while executions are pending.
+
+Also see `org-babel-duckdb--queue-refresh-timer' and
+`org-babel-duckdb--stop-queue-monitor'.")
+
+(defvar org-babel-duckdb--queue-refresh-timer nil
+  "Timer for auto-refreshing queue monitor display.
+
+Active when `org-babel-duckdb--queue-buffer' exists and queues are non-empty.
+Refresh interval is 0.5 seconds for responsive updates.
+
+Canceled by `org-babel-duckdb--stop-queue-monitor' when all queues complete.
+
+Also see `org-babel-duckdb--refresh-queue-display'.")
+
+(defvar org-babel-duckdb--exec-status (make-hash-table :test 'equal)
+  "Maps exec-id to execution status for queue display.
+
+Keys are execution ID strings (UUIDs).
+Values are symbols: queued, executing, finished, error, cancelled.
+
+Updated by `org-babel-duckdb--update-exec-status' via process filter
+and completion-handler callbacks.
+
+Only used when queue monitor is active. Separate from
+`org-duckdb-blocks-execution-status' to work without full tracking.
+
+Also see `org-babel-duckdb--get-exec-status'.")
+
+;;;; Queue Management Functions
+
+(defun org-babel-duckdb--session-send-next-request (session)
+  "Send commands for next queued request in SESSION if any.
+
+SESSION is session name string.
+
+Retrieves first pending exec-id from queue, updates status to 'executing,
+and sends queued commands to session process.
+
+Called by `org-babel-duckdb--enqueue-execution' for first execution and
+by `org-babel-duckdb--dequeue-execution' after completion.
+
+Also see `org-babel-duckdb--session-output-filter' for completion detection."
+  (when-let* ((queue-info (gethash session org-babel-duckdb--session-queues))
+              (pending (plist-get queue-info :pending))
+              (next-exec-id (car pending))
+              (send-data (gethash next-exec-id
+                                 (plist-get queue-info :send-data))))
+    ;; Update status
+    (org-babel-duckdb--update-exec-status next-exec-id 'executing)
+
+    ;; Get session process
+    (when-let* ((session-buffer (gethash session org-babel-duckdb-sessions))
+                (process (and (buffer-live-p session-buffer)
+                            (get-buffer-process session-buffer))))
+      ;; Send the queued commands
+      (process-send-string process send-data))))
+
+(defun org-babel-duckdb--maybe-show-queue (session)
+  "Auto-show queue for SESSION if conditions met.
+
+SESSION is session name string.
+
+Shows queue when:
+- `org-babel-duckdb-queue-display' is 'auto
+- Queue has 2+ pending executions
+- Queue monitor not already visible
+
+Called by `org-babel-duckdb--enqueue-execution' after adding to queue.
+
+Also see `org-babel-duckdb-show-queue' for manual display."
+  (when (and (eq org-babel-duckdb-queue-display 'auto)
+             (not org-babel-duckdb--queue-buffer))
+    (when-let ((queue-info (gethash session org-babel-duckdb--session-queues)))
+      (let ((pending (plist-get queue-info :pending)))
+        (when (>= (length pending) 2)
+          (org-babel-duckdb-show-queue session))))))
+
+(defun org-babel-duckdb--enqueue-execution (session exec-id completion-handler send-data temp-err-file)
+  "Add execution EXEC-ID to SESSION queue.
+
+SESSION is session name string.
+EXEC-ID is UUID for this execution.
+COMPLETION-HANDLER is callback function invoked when query completes.
+SEND-DATA is string of DuckDB commands to send when execution becomes active.
+TEMP-ERR-FILE is path to file for capturing stderr output.
+
+Implements FIFO queue: only first pending execution runs at a time.
+Subsequent executions wait until previous completes.
+
+Installs cooperative filter on first execution via
+`org-babel-duckdb--session-output-filter'.
+
+Sends commands immediately if queue was empty, otherwise queues for later.
+
+Updates status to 'executing for first execution, 'queued for others.
+
+Auto-shows queue monitor if `org-babel-duckdb-queue-display' is 'auto.
+
+Called by `org-babel-duckdb-execute-async'.
+
+Also see `org-babel-duckdb--dequeue-execution' for completion handling and
+`org-babel-duckdb--session-send-next-request' for command sending."
+  (let* ((queue-info (or (gethash session org-babel-duckdb--session-queues)
+                         (let ((info (list :pending nil
+                                          :completion-handlers (make-hash-table :test 'equal)
+                                          :send-data (make-hash-table :test 'equal)
+                                          :temp-err-files (make-hash-table :test 'equal)
+                                          :original-filter nil)))
+                           (puthash session info org-babel-duckdb--session-queues)
+                           info)))
+         (pending (plist-get queue-info :pending))
+         (completion-handlers (plist-get queue-info :completion-handlers))
+         (send-data-table (plist-get queue-info :send-data))
+         (temp-err-files (plist-get queue-info :temp-err-files))
+         (session-buffer (gethash session org-babel-duckdb-sessions))
+         (process (and session-buffer (get-buffer-process session-buffer))))
+
+    ;; Store completion-handler, send-data, and temp-err-file
+    (puthash exec-id completion-handler completion-handlers)
+    (puthash exec-id send-data send-data-table)
+    (puthash exec-id temp-err-file temp-err-files)
+    
+    ;; Add to pending queue
+    (setq pending (append pending (list exec-id)))
+    (plist-put queue-info :pending pending)
+
+    ;; Install cooperative filter on first execution only
+    (when (and process (= (length pending) 1))
+      (plist-put queue-info :original-filter (process-filter process))
+      (set-process-filter process
+                          (org-babel-duckdb--session-output-filter session)))
+    
+    ;; If this is the only request, send it immediately
+    (when (= (length pending) 1)
+      (org-babel-duckdb--session-send-next-request session))
+    
+    ;; Mark status based on position in queue
+    (if (= (length pending) 1)
+        (org-babel-duckdb--update-exec-status exec-id 'executing)
+      (org-babel-duckdb--update-exec-status exec-id 'queued))
+    
+    ;; Auto-show queue if configured
+    (org-babel-duckdb--maybe-show-queue session)))
+
+(defun org-babel-duckdb--dequeue-execution (session exec-id)
+  "Remove EXEC-ID from SESSION queue after completion.
+
+SESSION is session name string.
+EXEC-ID is completed execution UUID.
+
+Updates queue structure in `org-babel-duckdb--session-queues'.
+Removes completion-handler, send-data, and temp-err-file for completed execution.
+
+Triggers next execution via `org-babel-duckdb--session-send-next-request'
+if queue not empty.
+
+Called by `org-babel-duckdb--session-output-filter' when completion
+marker detected.
+
+Also see `org-babel-duckdb--enqueue-execution' for queue initialization."
+  (when-let ((queue-info (gethash session org-babel-duckdb--session-queues)))
+    (let ((pending (plist-get queue-info :pending))
+          (completion-handlers (plist-get queue-info :completion-handlers))
+          (send-data-table (plist-get queue-info :send-data))
+          (temp-err-files (plist-get queue-info :temp-err-files)))
+
+      ;; Remove from pending list
+      (setq pending (delq exec-id pending))
+      (plist-put queue-info :pending pending)
+
+      ;; Remove completion-handler, send-data, and temp-err-file
+      (remhash exec-id completion-handlers)
+      (remhash exec-id send-data-table)
+      (remhash exec-id temp-err-files)
+
+      ;; Update queue info
+      (puthash session queue-info org-babel-duckdb--session-queues)
+
+      ;; Send next queued request if any
+      (when pending
+        (org-babel-duckdb--session-send-next-request session)))))
+
+(defun org-babel-duckdb--update-exec-status (exec-id status)
+  "Update execution status for EXEC-ID to STATUS.
+
+EXEC-ID is UUID string.
+STATUS is symbol: queued, executing, finished, error, cancelled.
+
+Stores in `org-babel-duckdb--exec-status' for queue display.
+
+Called by process filter when execution starts and by completion-handler
+when execution completes.
+
+Also updates full tracking system if
+`org-duckdb-blocks-enable-tracking' is enabled.
+
+Also see `org-babel-duckdb--get-exec-status'."
+  (puthash exec-id status org-babel-duckdb--exec-status)
+  
+  ;; Also update full tracking if enabled
+  (when (and (boundp 'org-duckdb-blocks-enable-tracking)
+             org-duckdb-blocks-enable-tracking
+             (fboundp 'org-duckdb-blocks-update-execution-status))
+    (org-duckdb-blocks-update-execution-status exec-id status)))
+
+(defun org-babel-duckdb--get-exec-status (exec-id)
+  "Get current status for EXEC-ID.
+
+EXEC-ID is UUID string.
+
+Returns status symbol or `queued if not found.
+
+Also see `org-babel-duckdb--update-exec-status' for status values."
+  (or (gethash exec-id org-babel-duckdb--exec-status) 'queued))
+
+(defun org-babel-duckdb--refresh-queue-display ()
+  "Refresh queue monitor buffer with current execution states.
+
+Updates `org-babel-duckdb--queue-buffer' with latest queue status.
+Shows execution states: queued, executing, finished, error, cancelled.
+
+Called by `org-babel-duckdb--queue-refresh-timer' every 0.5 seconds.
+
+Stops refresh timer and cleans up when all queues are empty.
+For auto-display mode, also closes buffer when queue empties.
+
+Also see `org-babel-duckdb-show-queue' for buffer creation and
+`org-babel-duckdb--stop-queue-monitor' for cleanup."
+  (when (and org-babel-duckdb--queue-buffer
+             (buffer-live-p org-babel-duckdb--queue-buffer))
+    (with-current-buffer org-babel-duckdb--queue-buffer
+      (let ((inhibit-read-only t)
+            (point-before (point)))
+        (erase-buffer)
+        (insert "DuckDB Async Execution Queues\n")
+        (insert "==============================\n")
+        (insert (format "Last updated: %s\n\n"
+                        (format-time-string "%H:%M:%S")))
+
+        (let ((has-pending nil))
+          (maphash
+           (lambda (session queue-info)
+             (let ((pending (plist-get queue-info :pending)))
+               (when pending
+                 (setq has-pending t)
+                 (insert (format "Session: %s\n" session))
+                 (insert (format "  Pending: %d execution(s)\n" (length pending)))
+                 (insert "  Queue:\n")
+                 (cl-loop for exec-id in pending
+                          for idx from 1
+                          for status = (org-babel-duckdb--get-exec-status exec-id)
+                          for status-str = (pcase status
+                                             ('executing "executing")
+                                             ('finished "finished")
+                                             ('error "error")
+                                             ('cancelled "cancelled")
+                                             ('queued "")
+                                             (_ ""))
+                          do (insert (format "    %d. %s%s\n"
+                                            idx
+                                            (substring exec-id 0 8)
+                                            (if (string-empty-p status-str)
+                                                ""
+                                              (format " (%s)" status-str)))))
+                 (insert "\n"))))
+           org-babel-duckdb--session-queues)
+
+          (unless has-pending
+            (if (eq org-babel-duckdb-queue-display 'auto)
+                (progn
+                  ;; Auto mode: close window and buffer
+                  (org-babel-duckdb--stop-queue-monitor)
+                  (when (buffer-live-p org-babel-duckdb--queue-buffer)
+                    (when-let ((win (get-buffer-window org-babel-duckdb--queue-buffer)))
+                      (delete-window win))
+                    (kill-buffer org-babel-duckdb--queue-buffer)))
+              ;; Manual mode: just stop updating
+              (insert "No active async executions.\n")
+              (org-babel-duckdb--stop-queue-monitor))))
+
+        ;; Restore point position
+        (goto-char (min point-before (point-max)))))))
+
+(defun org-babel-duckdb--stop-queue-monitor ()
+  "Stop queue monitor and cleanup resources.
+
+Cancels refresh timer, clears queue buffer reference, and removes
+`kill-buffer' hook.
+
+Called automatically when all queues complete or buffer is killed.
+
+Also see `org-babel-duckdb-show-queue' for monitor startup and
+`org-babel-duckdb--refresh-queue-display' for refresh logic."
+  (when org-babel-duckdb--queue-refresh-timer
+    (cancel-timer org-babel-duckdb--queue-refresh-timer)
+    (setq org-babel-duckdb--queue-refresh-timer nil))
+  (setq org-babel-duckdb--queue-buffer nil))
+
+;;;###autoload
+(defun org-babel-duckdb-show-queue (&optional session)
+  "Display pending async executions for SESSION with live updates.
+
+When SESSION is nil, shows queues for all sessions.
+
+Creates live-updating buffer that refreshes every 0.5 seconds.
+Buffer shows execution states: queued, executing, finished, error, cancelled.
+
+Display position controlled by `org-babel-duckdb-queue-position':
+  bottom - Bottom side window (25% height)
+  side   - Right side window (25% width)
+
+Display format:
+  Session: SESSION-NAME
+    Pending: N execution(s)
+    Queue:
+      1. EXEC-ID (status)
+      2. EXEC-ID (status)
+      ...
+
+Status values:
+- (executing) - Currently running
+- (finished) - Completed successfully
+- (error) - Failed with error
+- (cancelled) - User cancelled
+- No label - Queued, waiting to execute
+
+Auto-stops when all queues complete.
+Press 'q' to close buffer and stop monitoring.
+Press 'g' to force refresh.
+
+Information from `org-babel-duckdb--session-queues' and
+`org-babel-duckdb--exec-status'.
+
+For detailed execution info, enable `org-duckdb-blocks-enable-tracking'
+and use `org-duckdb-blocks-show-execution-status'.
+
+Also see `org-babel-duckdb-queue-display' for auto-display settings."
+  (interactive
+   (list (when (> (hash-table-count org-babel-duckdb-sessions) 1)
+           (completing-read "Session (blank for all): "
+                            (hash-table-keys org-babel-duckdb-sessions)
+                            nil t nil nil ""))))
+
+  ;; Stop existing monitor if running
+  (when org-babel-duckdb--queue-refresh-timer
+    (org-babel-duckdb--stop-queue-monitor))
+
+  ;; Create or reuse buffer
+  (let ((buf (get-buffer-create "*DuckDB Async Queue*")))
+    (setq org-babel-duckdb--queue-buffer buf)
+
+    (with-current-buffer buf
+      (setq buffer-read-only t)
+      (use-local-map (make-sparse-keymap))
+      (local-set-key (kbd "q")
+                     (lambda ()
+                       (interactive)
+                       (org-babel-duckdb--stop-queue-monitor)
+                       (quit-window t)))
+      (local-set-key (kbd "g")
+                     (lambda ()
+                       (interactive)
+                       (org-babel-duckdb--refresh-queue-display)))
+
+      ;; Add kill-buffer hook for cleanup
+      (add-hook 'kill-buffer-hook
+                #'org-babel-duckdb--stop-queue-monitor
+                nil t))
+
+    ;; Initial display
+    (org-babel-duckdb--refresh-queue-display)
+
+    ;; Start refresh timer
+    (setq org-babel-duckdb--queue-refresh-timer
+          (run-with-timer 0.5 0.5 #'org-babel-duckdb--refresh-queue-display))
+
+    ;; Display buffer with position from customization
+    (display-buffer buf
+                    (pcase org-babel-duckdb-queue-position
+                      ('bottom
+                       '(display-buffer-in-side-window
+                         (side . bottom)
+                         (window-height . 0.25)))
+                      ('side
+                       '(display-buffer-in-side-window
+                         (side . right)
+                         (window-width . 0.25)))
+                      (_
+                       '(display-buffer-in-side-window
+                         (side . bottom)
+                         (window-height . 0.25)))))))
 
 ;;;; Session Management Functions
 
+(defun org-babel-duckdb--session-output-filter (session)
+  "Create output filter for SESSION handling FIFO async execution queue.
+
+SESSION is session name string.
+
+Returns filter function suitable for `set-process-filter'.
+
+The filter implements strict FIFO execution:
+1. Captures errors to temp-err-file for current execution
+2. Updates progress display for current execution
+3. Checks only first pending execution for completion marker
+4. Invokes completion-handler when completion marker found
+5. Triggers next execution via `org-babel-duckdb--dequeue-execution'
+6. Forwards output to original filter if exists
+7. Restores original filter when queue empties
+
+Installed by `org-babel-duckdb--enqueue-execution' on first execution.
+Removed automatically when queue becomes empty.
+
+Also see `org-babel-duckdb--session-send-next-request' for command sending
+and `org-babel-duckdb-execute-async' for async execution setup."
+  (lambda (proc string)
+    (when-let* ((queue-info (gethash session org-babel-duckdb--session-queues))
+                (pending (plist-get queue-info :pending))
+                (current-exec-id (car pending)))  ; Only check FIRST pending
+
+      ;; Capture errors to temp-err-file
+      (when (string-match-p "\\(Error:\\|Exception:\\|SYNTAX_ERROR\\|CATALOG_ERROR\\|BINDER_ERROR\\|PARSER_ERROR\\)" string)
+        (when-let ((temp-err-file (gethash current-exec-id 
+                                          (plist-get queue-info :temp-err-files))))
+          (with-temp-file temp-err-file
+            (when (file-exists-p temp-err-file)
+              (insert-file-contents temp-err-file))
+            (goto-char (point-max))
+            (insert (format "[%s] %s\n"
+                           (format-time-string "%H:%M:%S")
+                           (string-trim string))))))
+
+      ;; Update progress for current execution only
+      (when (gethash current-exec-id org-babel-duckdb-progress-buffers)
+        (org-babel-duckdb-update-progress-display current-exec-id string))
+
+      ;; Check for completion marker of CURRENT execution only
+      (let ((marker (format "ASYNC_COMPLETE_%s" current-exec-id)))
+        (when (string-search marker string)
+
+          ;; Mark as finished
+          (org-babel-duckdb--update-exec-status current-exec-id 'finished)
+
+          ;; Invoke completion-handler
+          (when-let ((completion-handler (gethash current-exec-id
+                                                 (plist-get queue-info :completion-handlers))))
+            (funcall completion-handler proc "finished\n"))
+
+          ;; Remove from queue (this will trigger next send)
+          (org-babel-duckdb--dequeue-execution session current-exec-id))))
+
+    ;; Forward to original filter if exists
+    (when-let ((original-filter (plist-get
+                                 (gethash session org-babel-duckdb--session-queues)
+                                 :original-filter)))
+      (funcall original-filter proc string))
+
+    ;; Restore original filter if queue empty
+    (when-let* ((queue-info (gethash session org-babel-duckdb--session-queues))
+                (empty-p (null (plist-get queue-info :pending))))
+      (when-let ((original-filter (plist-get queue-info :original-filter)))
+        (set-process-filter proc original-filter))
+      (remhash session org-babel-duckdb--session-queues))))
+
 (defun org-babel-duckdb-get-session-buffer (session-name)
   "Get or create buffer for SESSION-NAME.
+
+SESSION-NAME is session name string.
 
 Buffer name follows pattern *DuckDB:SESSION-NAME*.
 Registers new buffers in `org-babel-duckdb-sessions'.
@@ -253,12 +844,13 @@ Returns session buffer or nil.
 New sessions are registered in `org-babel-duckdb-sessions'.
 Uses `org-babel-duckdb-get-session-buffer' for buffer creation.
 Prompt configured via `org-babel-duckdb-prompt-char'.
+Database file stored in buffer-local `org-babel-duckdb-session-db-file'.
 
 For session management, see `org-babel-duckdb-delete-session' and
 `org-babel-duckdb-cleanup-sessions'."
   (unless (string= session-name "none")
     (let* ((session-name (if (or (null session-name) (string= session-name "yes"))
-                            "default" session-name))
+                             "default" session-name))
            (buffer (org-babel-duckdb-get-session-buffer session-name))
            (db-file (cdr (assq :db params)))
            (process (and (buffer-live-p buffer) (get-buffer-process buffer))))
@@ -272,14 +864,17 @@ For session management, see `org-babel-duckdb-delete-session' and
             (setq-local comint-prompt-regexp "^D> ")
             (setq-local comint-process-echoes t))
 
+          ;; Store database file as buffer-local variable
+          (setq-local org-babel-duckdb-session-db-file db-file)
+
           (let* ((cmd-args (list org-babel-duckdb-command))
                  (cmd-args (if db-file (append cmd-args (list db-file)) cmd-args)))
 
             (comint-exec buffer
-                        (format "duckdb-%s" session-name)
-                        (car cmd-args)
-                        nil
-                        (cdr cmd-args))
+                         (format "duckdb-%s" session-name)
+                         (car cmd-args)
+                         nil
+                         (cdr cmd-args))
 
             (setq process (get-buffer-process buffer))
 
@@ -310,49 +905,7 @@ For session management, see `org-babel-duckdb-delete-session' and
       buffer)))
 
 ;;;; Variable Handling Functions
-
-(defun org-babel-duckdb-var-to-duckdb (var)
-  "Convert Elisp value VAR to DuckDB SQL literal.
-
-Handles:
-- Nested lists as VALUES clauses
-- Flat lists as array literals
-- 'hline as NULL
-- Strings with escaped quotes
-- Numbers as-is
-
-Used by `org-babel-expand-body:duckdb' during variable substitution.
-Also see `org-babel-variable-assignments:duckdb'."
-  (cond
-   ((listp var)
-    (if (and (equal (length var) 1) (listp (car var)))
-        (format "VALUES %s"
-                (mapconcat
-                 (lambda (row)
-                   (concat "(" (mapconcat #'org-babel-duckdb-var-to-duckdb row ", ") ")"))
-                 var
-                 ", "))
-      (concat "[" (mapconcat #'org-babel-duckdb-var-to-duckdb var ", ") "]")))
-   ((eq var 'hline) "NULL")
-   ((stringp var) (format "'%s'" (replace-regexp-in-string "'" "''" var)))
-   ((null var) "NULL")
-   (t (format "%s" var))))
-
-(defun org-babel-variable-assignments:duckdb (params)
-  "Return list of DuckDB SET statements for variables in PARAMS.
-
-Currently unused - variable substitution happens textually via
-`org-babel-expand-body:duckdb'.
-
-Uses `org-babel-duckdb-var-to-duckdb' for value conversion."
-  (let ((vars (org-babel--get-vars params)))
-    (mapcar
-     (lambda (pair)
-       (format "%s=%s"
-               (car pair)
-               (org-babel-duckdb-var-to-duckdb (cdr pair))))
-     vars)))
-
+;;;; TODO 2024-11-05: limit variable substitution format "varname" is too vague
 (defun org-babel-expand-body:duckdb (body params)
   "Expand BODY with variables from PARAMS, adding prologue and epilogue.
 
@@ -363,7 +916,7 @@ Variable substitution supports three patterns:
 
 Also prepends :prologue and appends :epilogue if present in PARAMS.
 
-Uses `org-babel-duckdb-var-to-duckdb' for value conversion.
+Uses direct text replacemenet for value conversion.
 Called by `org-babel-execute:duckdb' before execution.
 
 See Info node `(org) Environment of a Code Block' for variable binding."
@@ -371,7 +924,7 @@ See Info node `(org) Environment of a Code Block' for variable binding."
         (epilogue (cdr (assq :epilogue params))))
     (with-temp-buffer
       (insert body)
-      
+
       (let ((vars (org-babel--get-vars params)))
         (dolist (pair vars)
           (let ((name (car pair))
@@ -474,29 +1027,29 @@ Used by `org-babel-duckdb-execute-sync' and
 Efficiently handles large files without loading entire contents into memory.
 MAX-LINES of nil or 0 means read entire file.
 
-Used by `org-babel-duckdb-execute-sync' and `org-babel-duckdb-async-sentinel'
+Used by `org-babel-duckdb-execute-sync' and `org-babel-duckdb--make-completion-handler'
 to apply truncation from `org-babel-duckdb-max-rows'."
   (if (or (not max-lines) (<= max-lines 0))
       (cons (with-temp-buffer
               (insert-file-contents file)
               (buffer-string))
             nil)
-    
+
     (with-temp-buffer
       (insert-file-contents file)
       (goto-char (point-min))
       (let ((lines-kept 0)
             (truncated nil))
-        
+
         (while (and (< lines-kept max-lines)
                     (not (eobp)))
           (forward-line 1)
           (setq lines-kept (1+ lines-kept)))
-        
+
         (unless (eobp)
           (setq truncated t)
           (delete-region (point) (point-max)))
-        
+
         (cons (buffer-string) truncated)))))
 
 (defun org-babel-duckdb-get-max-rows (params)
@@ -523,7 +1076,7 @@ Minimal cleanup - only strips session prompt from command echo line.
 Does not process ANSI colors or remove progress indicators.
 
 Prompt character from `org-babel-duckdb-prompt-char'.
-Called by `org-babel-duckdb-process-and-update-result'."
+Called by `org-babel-duckdb--insert-result-at-point'."
   (if (string-empty-p output)
       output
     (let ((prompt-char (regexp-quote org-babel-duckdb-prompt-char))
@@ -602,7 +1155,7 @@ Also see `org-babel-duckdb-process-params' for dot command generation."
                      (output-end (when marker-pos (line-beginning-position 0)))
                      (raw-output (buffer-substring-no-properties
                                   start-point output-end)))
-                
+
                 (if (and max-rows (> max-rows 0))
                     (let* ((lines (split-string raw-output "\n"))
                            (line-count (length lines)))
@@ -612,7 +1165,7 @@ Also see `org-babel-duckdb-process-params' for dot command generation."
                                           max-rows))
                         raw-output))
                   raw-output))
-            
+
             (error "DuckDB query timed out after %d seconds" timeout)))))))
 
 (defun org-babel-duckdb-execute-sync (session body params)
@@ -649,7 +1202,7 @@ For async execution, see `org-babel-duckdb-execute-async'."
                             temp-in-file
                             temp-out-file)))
         (org-babel-eval command "")
-        
+
         (let ((result (org-babel-duckdb-read-file-lines temp-out-file max-rows)))
           (if (cdr result)
               (concat (car result)
@@ -659,118 +1212,157 @@ For async execution, see `org-babel-duckdb-execute-async'."
 
 ;;;;; Asynchronous Execution
 
-(defun org-babel-duckdb-execute-async (session body params block-id exec-id)
+(defun org-babel-duckdb--find-result-location (exec-id)
+  "Find result insertion location for async execution EXEC-ID.
+
+EXEC-ID is UUID string.
+
+Returns cons cell (BUFFER . MARKER) or nil if not found.
+
+Search strategy:
+1. Check `org-babel-duckdb--pending-async' for stored location
+2. Scan current buffer for placeholder containing exec-id
+3. If `org-duckdb-blocks-enable-tracking' is non-nil, consult registry
+
+The embedded exec-id in placeholder text enables routing even after
+document edits, as markers move with text.
+
+Used by `org-babel-duckdb--make-completion-handler' to route results.
+
+Also see `org-babel-execute:duckdb' for placeholder insertion."
+  (or
+   ;; Fast path: stored location
+   (gethash exec-id org-babel-duckdb--pending-async)
+
+   ;; Fallback: scan buffer for placeholder
+   (save-excursion
+     (goto-char (point-min))
+     (when (re-search-forward
+            (format "Execution ID: %s" (regexp-quote exec-id))
+            nil t)
+       (cons (current-buffer) (point-marker))))
+
+   ;; Last resort: registry if tracking enabled
+   (when (and (boundp 'org-duckdb-blocks-enable-tracking)
+              org-duckdb-blocks-enable-tracking
+              (fboundp 'org-duckdb-blocks-get-block-location))
+     (org-duckdb-blocks-get-block-location exec-id))))
+
+(defun org-babel-duckdb-execute-async (session body params exec-id)
   "Execute BODY asynchronously in SESSION without blocking Emacs.
 
 BODY is SQL to execute.
-SESSION is session name (required for async, see `org-babel-duckdb-initiate-session').
+SESSION is session name (required for async).
 PARAMS is alist of header arguments.
-BLOCK-ID and EXEC-ID are UUIDs from `org-duckdb-blocks-register-execution'.
+EXEC-ID is UUID for this execution.
 
 Returns process object.
 
 Execution uses file-based output redirection for performance with large
-results. Completion detected via unique marker in process output.
+results. Completion detected via unique marker in session output.
 
-Results routed back via `org-babel-duckdb-async-sentinel'.
-Progress monitoring controlled by `org-babel-duckdb-show-progress'.
+Implements FIFO queue via `org-babel-duckdb--enqueue-execution':
+only one execution runs at a time per session, others wait in queue.
+
+Results routed via `org-babel-duckdb--find-result-location' which
+handles document edits during execution.
+
+Progress monitoring controlled by `org-babel-duckdb-show-progress' and
+`org-babel-duckdb-progress-display'.
 
 To cancel, use `org-babel-duckdb-cancel-execution'.
 For synchronous execution, see `org-babel-duckdb-execute-sync'."
-  (when-let* ((registry-info (gethash block-id org-duckdb-blocks-registry))
-              (file (plist-get registry-info :file))
-              (buffer-name (plist-get registry-info :buffer))
-              (begin (plist-get registry-info :begin))
-              (buf (or (and file (file-exists-p file) (find-file-noselect file))
-                       (get-buffer buffer-name))))
-
-    (with-current-buffer buf
-      (save-excursion
-        (goto-char begin)
-        (org-babel-remove-result)
-        (org-babel-insert-result "Executing asynchronously..."
-                                 (cdr (assq :result-params params))))))
-
   (let* ((session-buffer (org-babel-duckdb-initiate-session session params))
          (process (get-buffer-process session-buffer))
          (temp-out-file (org-babel-temp-file "duckdb-async-out-"))
          (temp-err-file (org-babel-temp-file "duckdb-async-err-"))
          (temp-script-file (org-babel-duckdb-write-temp-sql body))
          (result-params (cdr (assq :result-params params)))
-         (completion-marker (format "ASYNC_COMPLETE_%s" exec-id))
-         (original-filter (process-filter process)))
+         (completion-marker (format "ASYNC_COMPLETE_%s" exec-id)))
 
-    (org-duckdb-blocks-update-execution-status exec-id 'running)
-    (org-duckdb-blocks-store-process exec-id process)
+    ;; Optional: update tracking status
+    (when (and (boundp 'org-duckdb-blocks-enable-tracking)
+               org-duckdb-blocks-enable-tracking
+               (fboundp 'org-duckdb-blocks-update-execution-status))
+      (org-duckdb-blocks-update-execution-status exec-id 'running)
+      (when (fboundp 'org-duckdb-blocks-store-process)
+        (org-duckdb-blocks-store-process exec-id process)))
 
     (when org-babel-duckdb-show-progress
       (org-babel-duckdb-create-progress-monitor exec-id session-buffer))
 
-    (let ((execution-sequence
-           (concat
-            ".bail on\n"
-            (format ".output %s\n" (expand-file-name temp-out-file))
-            (format ".read %s\n" (expand-file-name temp-script-file))
-            ".output\n"
-            (format ".print \"%s\"\n" completion-marker))))
+    ;; Create completion-handler
+    (let ((completion-handler (org-babel-duckdb--make-completion-handler
+                              exec-id temp-out-file temp-err-file temp-script-file
+                              params result-params)))
 
-      (set-process-filter
-       process
-       (lambda (proc string)
-         (when (gethash exec-id org-babel-duckdb-progress-buffers)
-           (org-babel-duckdb-update-progress-display exec-id string))
+      ;; Prepare send data (don't send yet - queue will send when ready)
+      (let ((send-data
+             (concat
+              ".bail on\n"
+              (format ".output %s\n" (expand-file-name temp-out-file))
+              (format ".read %s\n" (expand-file-name temp-script-file))
+              ".output\n"
+              (format ".print \"%s\"\n" completion-marker))))
 
-         (when (string-match-p "\\(Error:\\|Exception:\\|SYNTAX_ERROR\\|CATALOG_ERROR\\)" string)
-           (org-babel-duckdb-capture-session-error exec-id string temp-err-file))
+        ;; Enqueue with send-data AND temp-err-file
+        (org-babel-duckdb--enqueue-execution session exec-id completion-handler send-data temp-err-file)))
 
-         (when (string-search completion-marker string)
-           (set-process-filter proc original-filter)
-           (funcall (org-babel-duckdb-async-sentinel
-                     exec-id temp-out-file temp-err-file temp-script-file
-                     block-id params result-params)
-                    proc "finished\n"))
+    process))
 
-         (when original-filter
-           (funcall original-filter proc string))))
+(defun org-babel-duckdb--make-completion-handler (exec-id temp-out-file temp-err-file temp-script-file params result-params)
+  "Create completion handler for async execution EXEC-ID.
 
-      (process-send-string process execution-sequence)
-      process)))
-
-(defun org-babel-duckdb-async-sentinel (exec-id temp-out-file temp-err-file temp-script-file
-                                               block-id params result-params)
-  "Create sentinel for async execution EXEC-ID.
-
-Returns function called when execution completes.
-Reads output from TEMP-OUT-FILE, classifies status, updates BLOCK-ID with
-results, and cleans up temporary files.
+Returns callback function invoked when execution completes.
+Reads output from TEMP-OUT-FILE, classifies status, updates results,
+and cleans up temporary files.
 
 TEMP-ERR-FILE and TEMP-SCRIPT-FILE are also cleaned up.
-PARAMS and RESULT-PARAMS control result insertion (see
-`org-babel-duckdb-process-and-update-result').
+PARAMS and RESULT-PARAMS control result insertion.
 
-Status tracking via `org-duckdb-blocks-update-execution-status'.
+Result location resolved via `org-babel-duckdb--find-result-location'
+which handles document edits during execution.
+
+Status tracking via `org-duckdb-blocks-update-execution-status' if
+`org-duckdb-blocks-enable-tracking' is enabled.
+
 Progress cleanup via `org-babel-duckdb-cleanup-progress-display'.
 Truncation via `org-babel-duckdb-get-max-rows' and
 `org-babel-duckdb-read-file-lines'.
 
-The sentinel is installed by `org-babel-duckdb-execute-async'."
+Handles both .bail on (stops on error, non-zero exit) and .bail off
+(continues on error, zero exit with both stdout and stderr).
+
+The handler is registered by `org-babel-duckdb-execute-async' and
+invoked by `org-babel-duckdb--session-output-filter' when completion
+marker detected."
   (lambda (process event)
     (let ((exit-status (process-exit-status process))
           (status-msg (string-trim event))
           (max-rows (org-babel-duckdb-get-max-rows params)))
 
+      ;; Update status based on event
+      (cond
+       ((and (string-match-p "finished" event) (zerop exit-status))
+        ;; Status will be set below based on output analysis
+        nil)
+       ((string-match-p "\\(killed\\|terminated\\|interrupt\\)" event)
+        (org-babel-duckdb--update-exec-status exec-id 'cancelled))
+       ((not (zerop exit-status))
+        (org-babel-duckdb--update-exec-status exec-id 'error)))
+
       (unwind-protect
           (condition-case err
               (let* ((stdout-result (if (file-exists-p temp-out-file)
-                                       (org-babel-duckdb-read-file-lines temp-out-file max-rows)
-                                     (cons "" nil)))
+                                        (org-babel-duckdb-read-file-lines temp-out-file max-rows)
+                                      (cons "" nil)))
                      (stdout-content (car stdout-result))
                      (was-truncated (cdr stdout-result))
                      (stderr-content (if (file-exists-p temp-err-file)
-                                        (with-temp-buffer
-                                          (insert-file-contents temp-err-file)
-                                          (buffer-string))
-                                      ""))
+                                         (with-temp-buffer
+                                           (insert-file-contents temp-err-file)
+                                           (buffer-string))
+                                       ""))
                      (has-output (not (string-empty-p (string-trim stdout-content))))
                      (has-errors (not (string-empty-p (string-trim stderr-content)))))
 
@@ -780,154 +1372,163 @@ The sentinel is installed by `org-babel-duckdb-execute-async'."
                                 (format "\n\n[Output truncated to %d lines - customize org-babel-duckdb-max-rows to change]"
                                         max-rows))))
 
-                (cond
-                 ((and (string-match-p "finished" event) (zerop exit-status))
+                ;; Update status if tracking enabled
+                (when (and (boundp 'org-duckdb-blocks-enable-tracking)
+                           org-duckdb-blocks-enable-tracking
+                           (fboundp 'org-duckdb-blocks-update-execution-status))
                   (cond
-                   (has-errors
+                   ;; Non-zero exit: .bail on was active, execution stopped on error
+                   ((not (zerop exit-status))
+                    (org-duckdb-blocks-update-execution-status 
+                     exec-id 'error 
+                     (if has-errors stderr-content
+                       (format "Process exited with code %d" exit-status))))
+                   
+                   ;; Zero exit with errors: .bail off was active, execution continued
+                   ((and (zerop exit-status) has-errors)
                     (org-duckdb-blocks-update-execution-status
-                     exec-id 'error (format "DuckDB Error: %s" stderr-content))
-                    (org-babel-duckdb-process-and-update-result
-                     block-id (format "DuckDB Error:\n%s" stderr-content)
-                     params result-params))
-                   (has-output
-                    (org-duckdb-blocks-update-execution-status exec-id 'completed)
-                    (org-babel-duckdb-process-and-update-result
-                     block-id stdout-content params result-params))
+                     exec-id 'completed-with-errors
+                     (format "Completed with errors: %s" (substring stderr-content 0 (min 100 (length stderr-content))))))
+                   
+                   ;; Zero exit, no errors: clean success
+                   ((and (zerop exit-status) (not has-errors))
+                    (org-duckdb-blocks-update-execution-status exec-id 'completed))
+                   
+                   ;; Cancelled/interrupted
+                   ((string-match-p "\\(killed\\|terminated\\|interrupt\\)" event)
+                    (org-duckdb-blocks-update-execution-status exec-id 'cancelled status-msg))
+                   
+                   ;; Unknown state
                    (t
-                    (org-duckdb-blocks-update-execution-status
-                     exec-id 'warning "No output produced")
-                    (org-babel-duckdb-process-and-update-result
-                     block-id "Query completed but produced no output"
-                     params result-params))))
+                    (org-duckdb-blocks-update-execution-status exec-id 'unknown event))))
 
-                 ((string-match-p "\\(killed\\|terminated\\|interrupt\\)" event)
-                  (org-duckdb-blocks-update-execution-status exec-id 'cancelled status-msg)
-                  (org-babel-duckdb-process-and-update-result
-                   block-id (format "Execution cancelled: %s" status-msg)
-                   params result-params))
+                ;; Insert results at located position
+                (when-let ((location (org-babel-duckdb--find-result-location exec-id)))
+                  (let ((buffer (car location))
+                        (marker (cdr location)))
+                    (when (buffer-live-p buffer)
+                      (with-current-buffer buffer
+                        (save-excursion
+                          (goto-char marker)
+                          (let ((final-content
+                                 (cond
+                                  ;; Non-zero exit: .bail on, show only error
+                                  ((not (zerop exit-status))
+                                   (if has-errors
+                                       (format "DuckDB Error:\n%s" stderr-content)
+                                     (format "DuckDB Error (exit code %d): Unknown error" exit-status)))
+                                  
+                                  ;; Zero exit with both output and errors: .bail off
+                                  ((and (zerop exit-status) has-output has-errors)
+                                   (concat stdout-content
+                                           "\n\n--- Errors occurred during execution ---\n"
+                                           stderr-content))
+                                  
+                                  ;; Zero exit with only errors (no output): unusual but possible
+                                  ((and (zerop exit-status) (not has-output) has-errors)
+                                   (format "DuckDB Error:\n%s" stderr-content))
+                                  
+                                  ;; Zero exit with only output: normal success
+                                  ((and (zerop exit-status) has-output (not has-errors))
+                                   stdout-content)
+                                  
+                                  ;; Zero exit with no output and no errors
+                                  ((and (zerop exit-status) (not has-output) (not has-errors))
+                                   "Query completed but produced no output")
+                                  
+                                  ;; Cancelled/interrupted
+                                  ((string-match-p "\\(killed\\|terminated\\|interrupt\\)" event)
+                                   (format "Execution cancelled: %s" status-msg))
+                                  
+                                  ;; Unknown state
+                                  (t
+                                   (format "Unknown process status: %s" event)))))
+                            
+                            (org-babel-remove-result)
+                            (org-babel-duckdb--insert-result-at-point 
+                             final-content params result-params)))))))
 
-                 ((not (zerop exit-status))
-                  (let ((error-msg (if has-errors stderr-content
-                                    (format "Process exited with code %d" exit-status))))
-                    (org-duckdb-blocks-update-execution-status exec-id 'error error-msg)
-                    (org-babel-duckdb-process-and-update-result
-                     block-id (format "DuckDB Error (exit code %d):\n%s"
-                                      exit-status error-msg)
-                     params result-params)))
-
-                 (t
-                  (org-duckdb-blocks-update-execution-status exec-id 'unknown event)
-                  (org-babel-duckdb-process-and-update-result
-                   block-id (format "Unknown process status: %s" event)
-                   params result-params))))
+                ;; Clean up async registry
+                (remhash exec-id org-babel-duckdb--pending-async))
 
             (error
-             (let ((error-msg (format "Sentinel error: %S" err)))
-               (org-duckdb-blocks-update-execution-status exec-id 'error error-msg)
-               (org-babel-duckdb-process-and-update-result
-                block-id error-msg params result-params))))
+             (let ((error-msg (format "Completion handler error: %S" err)))
+               (when (and (boundp 'org-duckdb-blocks-enable-tracking)
+                          org-duckdb-blocks-enable-tracking
+                          (fboundp 'org-duckdb-blocks-update-execution-status))
+                 (org-duckdb-blocks-update-execution-status exec-id 'error error-msg))
+               (message "[ob-duckdb] %s" error-msg))))
 
         (org-babel-duckdb-cleanup-progress-display exec-id)
         (when (file-exists-p temp-out-file) (delete-file temp-out-file))
         (when (file-exists-p temp-err-file) (delete-file temp-err-file))
         (when (file-exists-p temp-script-file) (delete-file temp-script-file))))))
 
-(defun org-babel-duckdb-capture-session-error (exec-id error-output temp-err-file)
-  "Capture ERROR-OUTPUT for EXEC-ID by appending to TEMP-ERR-FILE.
-
-Adds timestamp to each error for correlation with progress displays (see
-`org-babel-duckdb-update-progress-display').
-
-Called by async execution filter when errors detected.
-Errors read by `org-babel-duckdb-async-sentinel'."
-  (with-temp-file temp-err-file
-    (when (file-exists-p temp-err-file)
-      (insert-file-contents temp-err-file))
-    (goto-char (point-max))
-    (insert (format "[%s] %s\n"
-                    (format-time-string "%H:%M:%S")
-                    (string-trim error-output)))))
-
 ;;;;; Result Processing
 
-(defun org-babel-duckdb-process-and-update-result (block-id raw-output params result-params)
-  "Process RAW-OUTPUT and update results for BLOCK-ID.
+(defun org-babel-duckdb--extract-exec-id-from-results ()
+  "Extract exec-id from results block at point.
 
-Cleans output via `org-babel-duckdb-clean-output', determines display
-location (inline vs buffer per :output in PARAMS), and inserts into
-appropriate location with ANSI color processing.
+Searches for pattern 'Execution ID: <UUID>' in results block below
+current source block.
 
-RESULT-PARAMS control formatting and insertion (see `org-babel-insert-result').
+Returns exec-id string or nil if not found.
 
-Block location resolved via BLOCK-ID in `org-duckdb-blocks-registry'.
+Used by `org-babel-duckdb-cancel-current-execution' when tracking
+is disabled.
 
-For buffered output, uses `org-babel-duckdb-display-buffer'.
-For table results, uses `org-babel-duckdb-table-or-scalar'.
+Also see `org-babel-execute:duckdb' for placeholder format."
+  (save-excursion
+    (when-let ((result-pos (org-babel-where-is-src-block-result)))
+      (goto-char result-pos)
+      (when (re-search-forward "Execution ID: \\([a-f0-9-]+\\)"
+                               (org-babel-result-end) t)
+        (match-string 1)))))
 
-Called by both `org-babel-duckdb-execute-sync' and
-`org-babel-duckdb-async-sentinel'."
-  (message "[ob-duckdb] Processing results for block %s" (substring block-id 0 8))
+(defun org-babel-duckdb--insert-result-at-point (content params result-params)
+  "Insert CONTENT as result at point with PARAMS and RESULT-PARAMS.
 
-  (let* ((cleaned-output (org-babel-duckdb-clean-output raw-output))
+Helper function factored out from result insertion logic.
+Handles wrapping, ANSI color processing, and table conversion.
+
+CONTENT is result string to insert.
+PARAMS is alist of header arguments.
+RESULT-PARAMS controls formatting and insertion.
+
+Respects :wrap header argument and :results table directive.
+Processes ANSI escape codes for color output.
+
+Called by `org-babel-duckdb--make-completion-handler' and
+`org-babel-execute:duckdb'."
+  (let* ((cleaned-output (org-babel-duckdb-clean-output content))
          (output-type (cdr (assq :output params)))
          (use-buffer-output (and output-type (string= output-type "buffer"))))
 
-    (when-let* ((registry-info (gethash block-id org-duckdb-blocks-registry))
-                (file (plist-get registry-info :file))
-                (buffer-name (plist-get registry-info :buffer))
-                (begin (plist-get registry-info :begin))
-                (buf (or (and file (file-exists-p file) (find-file-noselect file))
-                         (get-buffer buffer-name))))
+    (when (and (stringp cleaned-output)
+               (string-match-p "\e\\[" cleaned-output))
+      (with-temp-buffer
+        (insert cleaned-output)
+        (ansi-color-apply-on-region (point-min) (point-max))
+        (setq cleaned-output (buffer-string))))
 
-      (with-current-buffer buf
+    (if use-buffer-output
+        (progn
+          (org-babel-insert-result "Output sent to buffer." result-params)
+          (org-babel-duckdb-display-buffer cleaned-output))
+
+      (org-babel-insert-result
+       (if (member "table" result-params)
+           (org-babel-duckdb-table-or-scalar cleaned-output)
+         cleaned-output)
+       result-params)
+
+      (when-let ((result-pos (org-babel-where-is-src-block-result)))
         (save-excursion
-          (goto-char begin)
-          (let ((element (org-element-at-point)))
-            (when (eq (org-element-type element) 'src-block)
-              (let* ((header-params (org-element-property :parameters element))
-                     (header-args (org-babel-parse-header-arguments header-params))
-                     (default-wrap (cdr (assq :wrap org-babel-default-header-args:duckdb)))
-                     (header-wrap (cdr (assq :wrap header-args)))
-                     (wrap (or header-wrap default-wrap))
-                     (effective-params result-params))
-
-                (if use-buffer-output
-                    (progn
-                      (org-babel-remove-result)
-                      (org-babel-insert-result "Output sent to buffer." effective-params)
-                      (org-babel-duckdb-display-buffer cleaned-output))
-
-                  (progn
-                    (when (and wrap (not (assq :wrap effective-params)))
-                      (setq effective-params
-                            (cons (cons :wrap wrap) effective-params)))
-
-                    (when (and (stringp cleaned-output) (string-match-p "\e\\[" cleaned-output))
-                      (with-temp-buffer
-                        (insert cleaned-output)
-                        (ansi-color-apply-on-region (point-min) (point-max))
-                        (setq cleaned-output (buffer-string))))
-
-                    (condition-case err
-                        (progn
-                          (org-babel-remove-result)
-                          (org-babel-insert-result
-                           (if (member "table" result-params)
-                               (org-babel-duckdb-table-or-scalar cleaned-output)
-                             cleaned-output)
-                           effective-params)
-
-                          (when-let ((result-pos (org-babel-where-is-src-block-result)))
-                            (save-excursion
-                              (goto-char result-pos)
-                              (when (looking-at org-babel-result-regexp)
-                                (let ((end (org-babel-result-end))
-                                      (ansi-color-context-region nil))
-                                  (ansi-color-apply-on-region result-pos end))))))
-                      (error
-                       (message "[ob-duckdb] Error updating result: %S" err)))))))))))
-
-    cleaned-output))
+          (goto-char result-pos)
+          (when (looking-at org-babel-result-regexp)
+            (let ((end (org-babel-result-end))
+                  (ansi-color-context-region nil))
+              (ansi-color-apply-on-region result-pos end))))))))
 
 (defun org-babel-duckdb-table-or-scalar (result)
   "Convert RESULT string into Elisp structure for Org tables.
@@ -953,7 +1554,7 @@ See Info node `(org) Results of Evaluation' for result types."
 
 Processes ANSI colors and displays buffer.
 
-Called by `org-babel-duckdb-process-and-update-result' when :output buffer
+Called by `org-babel-duckdb--insert-result-at-point' when :output buffer
 is specified in source block header."
   (let ((buf (get-buffer-create org-babel-duckdb-output-buffer)))
     (with-current-buffer buf
@@ -968,32 +1569,55 @@ is specified in source block header."
 ;;;; Progress Monitoring Functions
 
 (defun org-babel-duckdb-create-progress-monitor (exec-id session-buffer)
-  "Create status monitoring buffer for async execution EXEC-ID.
+  "Create status monitoring for async execution EXEC-ID.
 
-Displays timestamped messages in side window.
+Display method controlled by `org-babel-duckdb-progress-display':
+  popup      - Dedicated buffer in side window
+  minibuffer - One-time message (delayed to avoid Org message collision)
+  nil        - No display
+
 SESSION-BUFFER currently unused.
 
-Registers buffer in `org-babel-duckdb-progress-buffers'.
-Updates via `org-babel-duckdb-update-progress-display'.
-Cleanup via `org-babel-duckdb-cleanup-progress-display'.
+For popup mode:
+- Registers buffer in `org-babel-duckdb-progress-buffers'
+- Updates via `org-babel-duckdb-update-progress-display'
+- Cleanup via `org-babel-duckdb-cleanup-progress-display'
+
+For minibuffer mode:
+- Shows delayed message (0.1s) to appear after Org's completion message
+- No ongoing updates
 
 Only called when `org-babel-duckdb-show-progress' is non-nil."
-  (let* ((progress-buffer-name (format "*DuckDB Progress-%s*" (substring exec-id 0 8)))
-         (progress-buffer (get-buffer-create progress-buffer-name)))
+  (pcase org-babel-duckdb-progress-display
+    ('popup
+     (let* ((progress-buffer-name (format "*DuckDB Progress-%s*" (substring exec-id 0 8)))
+            (progress-buffer (get-buffer-create progress-buffer-name)))
 
-    (puthash exec-id progress-buffer org-babel-duckdb-progress-buffers)
+       (puthash exec-id progress-buffer org-babel-duckdb-progress-buffers)
 
-    (with-current-buffer progress-buffer
-      (erase-buffer)
-      (insert (format "DuckDB Execution Progress\nExecution ID: %s\n\n" exec-id))
-      (goto-char (point-max)))
+       (with-current-buffer progress-buffer
+         (erase-buffer)
+         (insert (format "DuckDB Execution Progress\nExecution ID: %s\n\n" exec-id))
+         (goto-char (point-max)))
 
-    (display-buffer progress-buffer
-                   '(display-buffer-in-side-window
-                     (side . bottom)
-                     (window-height . 0.15)))
+       ;; Use popup window instead of side window
+       (display-buffer progress-buffer
+                       '((display-buffer-pop-up-window)
+                         (window-height . 0.3)
+                         (window-parameters . ((no-other-window . t)
+                                               (no-delete-other-windows . t)))))
 
-    progress-buffer))
+       progress-buffer))
+
+    ('minibuffer
+     ;; Delay message to appear after Org's "Code block evaluation complete"
+     (run-with-timer 0.1 nil
+                     (lambda ()
+                       (message "[DuckDB] Executing async query %s..."
+                                (substring exec-id 0 8))))
+     nil)
+
+    (_ nil)))
 
 (defun org-babel-duckdb-update-progress-display (exec-id output)
   "Update status display for EXEC-ID with new OUTPUT from process.
@@ -1001,7 +1625,7 @@ Only called when `org-babel-duckdb-show-progress' is non-nil."
 Filters OUTPUT for status lines and appends with timestamps.
 
 Called by async execution filter installed by
-`org-babel-duckdb-execute-async'.
+`org-babel-duckdb--session-output-filter'.
 
 Updates buffer in `org-babel-duckdb-progress-buffers'."
   (when-let ((progress-buffer (gethash exec-id org-babel-duckdb-progress-buffers)))
@@ -1022,22 +1646,41 @@ Updates buffer in `org-babel-duckdb-progress-buffers'."
 (defun org-babel-duckdb-cleanup-progress-display (exec-id)
   "Clean up status display for EXEC-ID after execution completes.
 
-Appends completion message and schedules buffer kill after 3 seconds.
+Behavior depends on `org-babel-duckdb-progress-display':
+  popup      - Append completion message, schedule buffer kill after 3s
+  minibuffer - Show delayed completion message
+  nil        - No action
 
 Removes EXEC-ID from `org-babel-duckdb-progress-buffers'.
 
-Called by `org-babel-duckdb-async-sentinel'."
-  (when-let ((progress-buffer (gethash exec-id org-babel-duckdb-progress-buffers)))
-    (when (buffer-live-p progress-buffer)
-      (with-current-buffer progress-buffer
-        (goto-char (point-max))
-        (insert (format "\n[%s] Execution completed.\n"
-                        (format-time-string "%H:%M:%S"))))
-      (run-with-timer 3.0 nil
+Called by `org-babel-duckdb--make-completion-handler'."
+  (pcase org-babel-duckdb-progress-display
+    ('popup
+     (when-let ((progress-buffer (gethash exec-id org-babel-duckdb-progress-buffers)))
+       (when (buffer-live-p progress-buffer)
+         (with-current-buffer progress-buffer
+           (goto-char (point-max))
+           (insert (format "\n[%s] Execution completed.\n"
+                           (format-time-string "%H:%M:%S"))))
+         
+         ;; Close window and kill buffer after delay
+         (run-with-timer 3.0 nil
+                         (lambda (buf)
+                           (when (buffer-live-p buf)
+                             (when-let ((win (get-buffer-window buf)))
+                               (delete-window win))
+                             (kill-buffer buf)))
+                         progress-buffer))
+       (remhash exec-id org-babel-duckdb-progress-buffers)))
+
+    ('minibuffer
+     ;; Delay message to avoid collision with completion-handler messages
+     (run-with-timer 0.1 nil
                      (lambda ()
-                       (when (buffer-live-p progress-buffer)
-                         (kill-buffer progress-buffer)))))
-    (remhash exec-id org-babel-duckdb-progress-buffers)))
+                       (message "[DuckDB] Async query %s completed"
+                                (substring exec-id 0 8)))))
+
+    (_ nil)))
 
 ;;;; Interactive Session Management Commands
 
@@ -1107,6 +1750,7 @@ To view remaining sessions, use `org-babel-duckdb-display-sessions'."
   "Display detailed information about all active DuckDB sessions.
 
 Shows session name, database file, status, and buffer name.
+Database file retrieved from buffer-local `org-babel-duckdb-session-db-file'.
 
 Uses `org-babel-duckdb-list-sessions' to enumerate sessions.
 For programmatic access, use that function directly."
@@ -1115,24 +1759,48 @@ For programmatic access, use that function directly."
     (let ((sessions (org-babel-duckdb-list-sessions)))
       (if (null sessions)
           (princ "No active DuckDB sessions.\n\n")
-        (princ "Active DuckDB Sessions:\n\n")
-        (princ (format "%-20s %-25s %-10s\n" "SESSION NAME" "DATABASE" "STATUS"))
-        (princ (make-string 60 ?-))
-        (princ "\n")
-        (dolist (entry sessions)
-          (let* ((name (car entry))
-                 (buffer (cdr entry))
-                 (proc (and (buffer-live-p buffer) (get-buffer-process buffer)))
-                 (status (cond
-                          ((not (buffer-live-p buffer)) "BUFFER DEAD")
-                          ((not proc) "NO PROCESS")
-                          ((process-live-p proc) "ACTIVE")
-                          (t "TERMINATED")))
-                 (db-file "N/A"))
-            (princ (format "%-20s %-25s %-10s\n"
-                           name
-                           db-file
-                           status))))))))
+        (let* ((db-paths (mapcar
+                          (lambda (entry)
+                            (let* ((buffer (cdr entry))
+                                   (db-file (and (buffer-live-p buffer)
+                                                 (buffer-local-value 'org-babel-duckdb-session-db-file buffer))))
+                              (cond
+                               ((null db-file) "in-memory")
+                               (t (abbreviate-file-name db-file)))))
+                          sessions))
+               (max-db-width (max 25 (apply #'max (mapcar #'length db-paths))))
+               (name-width 20)
+               (status-width 10)
+               (total-width (+ name-width max-db-width status-width 4))
+               (format-string (concat "%-20s %-" (number-to-string max-db-width) "s %-10s\n")))
+          
+          (princ "Active DuckDB Sessions:\n\n")
+          (princ (format format-string 
+                         "SESSION NAME" 
+                         "DATABASE" 
+                         "STATUS"))
+          (princ (make-string total-width ?-))
+          (princ "\n")
+
+          (dolist (entry sessions)
+            (let* ((name (car entry))
+                   (buffer (cdr entry))
+                   (proc (and (buffer-live-p buffer) (get-buffer-process buffer)))
+                   (status (cond
+                            ((not (buffer-live-p buffer)) "BUFFER DEAD")
+                            ((not proc) "NO PROCESS")
+                            ((process-live-p proc) "ACTIVE")
+                            (t "TERMINATED")))
+                   (db-file (if (buffer-live-p buffer)
+                                (buffer-local-value 'org-babel-duckdb-session-db-file buffer)
+                              nil))
+                   (db-display (cond
+                                ((null db-file) "in-memory")
+                                (t (abbreviate-file-name db-file)))))
+              (princ (format format-string
+                             name
+                             db-display
+                             status)))))))))
 
 ;;;; Execution Cancellation Commands
 
@@ -1141,67 +1809,109 @@ For programmatic access, use that function directly."
   "Cancel async execution EXEC-ID.
 
 Sends SIGINT to process via `interrupt-process'.
-Updates status via `org-duckdb-blocks-update-execution-status'.
+Updates status via `org-babel-duckdb--update-exec-status'.
+
+Without `org-duckdb-blocks-enable-tracking', finds process by searching
+all active sessions for matching exec-id in their queues.
+
+With tracking enabled, uses `org-duckdb-blocks-get-process' for direct
+process lookup.
+
+EXEC-ID is execution UUID string.
+
+When interactive:
+- With tracking: completion from running executions
+- Without tracking: completion from all queued executions
 
 To cancel current block, use `org-babel-duckdb-cancel-current-execution'.
-To view running executions, see `org-duckdb-blocks-show-execution-status'."
+To view running executions, see `org-babel-duckdb-show-queue'."
   (interactive
-   (list (completing-read "Cancel execution: "
-                          (org-duckdb-blocks-get-running-executions))))
-  (if-let ((process (org-duckdb-blocks-get-process exec-id)))
-      (when (process-live-p process)
-        (interrupt-process process)
-        (message "[ob-duckdb] Interrupted execution %s" (substring exec-id 0 8))
-        (org-duckdb-blocks-update-execution-status exec-id 'cancelled))
-    (message "[ob-duckdb] Execution %s not found or already completed"
-            (substring exec-id 0 8))))
+   (list (if (and (boundp 'org-duckdb-blocks-enable-tracking)
+                  org-duckdb-blocks-enable-tracking
+                  (fboundp 'org-duckdb-blocks-get-running-executions))
+             (completing-read "Cancel execution: "
+                              (org-duckdb-blocks-get-running-executions))
+           ;; Without tracking: offer all queued executions
+           (let ((queued-ids nil))
+             (maphash (lambda (_session queue-info)
+                        (dolist (id (plist-get queue-info :pending))
+                          (push id queued-ids)))
+                      org-babel-duckdb--session-queues)
+             (if queued-ids
+                 (completing-read "Cancel execution: " queued-ids)
+               (read-string "Execution ID: "))))))
+
+  (let ((process (if (and (boundp 'org-duckdb-blocks-enable-tracking)
+                          org-duckdb-blocks-enable-tracking
+                          (fboundp 'org-duckdb-blocks-get-process))
+                     ;; Use tracking system
+                     (org-duckdb-blocks-get-process exec-id)
+
+                   ;; Find process by searching session queues
+                   (cl-block find-process
+                     (maphash (lambda (session queue-info)
+                                (when (member exec-id (plist-get queue-info :pending))
+                                  (when-let* ((session-buffer (gethash session org-babel-duckdb-sessions))
+                                              (proc (and (buffer-live-p session-buffer)
+                                                        (get-buffer-process session-buffer))))
+                                    (cl-return-from find-process proc))))
+                              org-babel-duckdb--session-queues)
+                     nil))))
+
+    (if (and process (process-live-p process))
+        (progn
+          (interrupt-process process)
+          (message "[ob-duckdb] Interrupted execution %s"
+                   (if (> (length exec-id) 8)
+                       (substring exec-id 0 8)
+                     exec-id))
+
+          ;; Update status in both tracking systems
+          (org-babel-duckdb--update-exec-status exec-id 'cancelled)
+
+          (when (and (boundp 'org-duckdb-blocks-enable-tracking)
+                     org-duckdb-blocks-enable-tracking
+                     (fboundp 'org-duckdb-blocks-update-execution-status))
+            (org-duckdb-blocks-update-execution-status exec-id 'cancelled)))
+      (message "[ob-duckdb] Execution %s not found or already completed"
+               (if (> (length exec-id) 8)
+                   (substring exec-id 0 8)
+                 exec-id)))))
 
 ;;;###autoload
 (defun org-babel-duckdb-cancel-current-execution ()
-  "Cancel most recent async execution in DuckDB block at point.
+  "Cancel async execution for DuckDB block at point.
 
-Point must be in a DuckDB source block.
+Extraction strategies:
+1. If tracking enabled: use `org-duckdb-blocks-get-latest-exec-id-for-block'
+2. Otherwise: extract exec-id from results placeholder
 
-Uses `org-duckdb-blocks-get-latest-exec-id-for-block' to find execution.
-Delegates to `org-babel-duckdb-cancel-execution'."
+Point must be in DuckDB source block with pending async execution.
+
+Delegates to `org-babel-duckdb-cancel-execution' with discovered exec-id.
+
+Also see `org-babel-duckdb--extract-exec-id-from-results' for
+placeholder parsing."
   (interactive)
-  (if-let* ((element (org-element-at-point))
-            (is-duckdb (and (eq (car element) 'src-block)
-                           (string= (org-element-property :language element) "duckdb")))
-            (begin (org-element-property :begin element))
-            (exec-id (org-duckdb-blocks-get-latest-exec-id-for-block begin)))
-      (org-babel-duckdb-cancel-execution exec-id)
-    (message "[ob-duckdb] No active execution found for current block")))
+  (let ((exec-id
+         (if (and (boundp 'org-duckdb-blocks-enable-tracking)
+                  org-duckdb-blocks-enable-tracking
+                  (fboundp 'org-duckdb-blocks-get-latest-exec-id-for-block))
+             ;; Use tracking system
+             (when-let* ((element (org-element-at-point))
+                         (is-duckdb (and (eq (car element) 'src-block)
+                                        (string= (org-element-property :language element)
+                                                "duckdb")))
+                         (begin (org-element-property :begin element)))
+               (org-duckdb-blocks-get-latest-exec-id-for-block begin))
 
-;;;; Debug Utilities
+           ;; Extract from results placeholder
+           (org-babel-duckdb--extract-exec-id-from-results))))
 
-(defun org-babel-duckdb-debug-show-process-buffer (session-name)
-  "Show comint process buffer for SESSION-NAME.
+    (if exec-id
+        (org-babel-duckdb-cancel-execution exec-id)
+      (message "[ob-duckdb] No active execution found for current block"))))
 
-Displays raw DuckDB interaction for debugging.
-
-Buffer managed by `org-babel-duckdb-initiate-session'."
-  (interactive "sSession name: ")
-  (let ((buffer (gethash session-name org-babel-duckdb-sessions)))
-    (if buffer
-        (display-buffer buffer)
-      (message "No session buffer found for %s" session-name))))
-
-(defun org-babel-duckdb-debug-recent-outputs ()
-  "Display recent async execution output buffers.
-
-Shows contents of temporary output buffers for debugging.
-
-Searches for buffers created by `org-babel-duckdb-execute-async'."
-  (interactive)
-  (with-output-to-temp-buffer "*DuckDB Async Debug*"
-    (let ((buffers (buffer-list)))
-      (dolist (buf buffers)
-        (when (string-match-p "\\*duckdb-async-output-" (buffer-name buf))
-          (princ (format "=== Buffer: %s ===\n" (buffer-name buf)))
-          (with-current-buffer buf
-            (princ (buffer-string)))
-          (princ "\n\n"))))))
 
 ;;;; Main Execution Entry Point
 
@@ -1221,18 +1931,17 @@ Generates dot commands via `org-babel-duckdb-process-params'.
 Dispatches to `org-babel-duckdb-execute-sync' or
 `org-babel-duckdb-execute-async'.
 
-Requires `org-duckdb-blocks-setup' for block tracking.
+Block tracking is optional via `org-duckdb-blocks-enable-tracking'.
+When disabled, only async executions are tracked minimally via
+`org-babel-duckdb--pending-async'.
 
 See Info node `(org-babel-duckdb) Execution' for details."
   (message "[ob-duckdb] Starting execution")
-
-  (unless (advice-member-p 'org-duckdb-blocks-register-execution 'org-babel-execute-src-block)
-    (org-duckdb-blocks-setup))
-
   (let* ((session (cdr (assq :session params)))
          (use-async (and (cdr (assq :async params))
                          (string= (cdr (assq :async params)) "yes")))
-         (result-params (cdr (assq :result-params params))))
+         (result-params (cdr (assq :result-params params)))
+         (exec-id (org-id-uuid)))
 
     (when (and use-async
                (or (null session) (string= session "none")))
@@ -1247,57 +1956,49 @@ See Info node `(org-babel-duckdb) Execution' for details."
 
       (if use-async
           (progn
-            (unless org-babel-duckdb-last-registration
-              (error "No block registration info available"))
+            ;; Optional: register with tracking system
+            (when (and (boundp 'org-duckdb-blocks-enable-tracking)
+                       org-duckdb-blocks-enable-tracking
+                       (fboundp 'org-duckdb-blocks-register-execution))
+              (let ((registration (org-duckdb-blocks-register-execution)))
+                (when registration
+                  (setq exec-id (plist-get registration :exec-id)))))
 
-            (let ((block-id (plist-get org-babel-duckdb-last-registration :block-id))
-                  (exec-id (plist-get org-babel-duckdb-last-registration :exec-id)))
+            ;; Store location for async routing
+            (let ((marker (point-marker)))
+              (puthash exec-id
+                       (cons (current-buffer) marker)
+                       org-babel-duckdb--pending-async))
 
-              (setq org-babel-duckdb-last-registration nil)
+            ;; Start async execution
+            (org-babel-duckdb-execute-async session final-body params exec-id)
 
-              (org-babel-duckdb-execute-async session final-body params block-id exec-id)
-              "Executing asynchronously..."))
+            ;; Return placeholder text for Org to insert
+            (format "DuckDB Execution in Progress\nExecution ID: %s"
+                    exec-id))
 
-        (let* ((raw-result (org-babel-duckdb-execute-sync session final-body params))
-               (block-id nil)
-               (exec-id nil))
+        ;; Sync execution
+        (let ((raw-result (org-babel-duckdb-execute-sync session final-body params)))
 
-          (when org-babel-duckdb-last-registration
-            (setq block-id (plist-get org-babel-duckdb-last-registration :block-id)
-                  exec-id (plist-get org-babel-duckdb-last-registration :exec-id))
-            (setq org-babel-duckdb-last-registration nil))
+          ;; Optional: register if tracking enabled
+          (when (and (boundp 'org-duckdb-blocks-enable-tracking)
+                     org-duckdb-blocks-enable-tracking
+                     (fboundp 'org-duckdb-blocks-register-execution))
+            (org-duckdb-blocks-register-execution))
 
-          (if (and block-id exec-id)
-              (org-babel-duckdb-process-and-update-result block-id raw-result params result-params)
+          ;; Process and return result
+          (let* ((cleaned-output (org-babel-duckdb-clean-output raw-result))
+                 (output-type (cdr (assq :output params)))
+                 (use-buffer-output (and output-type (string= output-type "buffer"))))
 
-            (let* ((cleaned-output (org-babel-duckdb-clean-output raw-result))
-                   (output-type (cdr (assq :output params)))
-                   (use-buffer-output (and output-type (string= output-type "buffer"))))
+            (if use-buffer-output
+                (progn
+                  (org-babel-duckdb-display-buffer cleaned-output)
+                  "Output sent to buffer.")
 
-              (if use-buffer-output
-                  (progn
-                    (org-babel-duckdb-display-buffer cleaned-output)
-                    "Output sent to buffer.")
-
-                (if (member "table" result-params)
-                    (org-babel-duckdb-table-or-scalar cleaned-output)
-                  cleaned-output)))))))))
-
-;;;; Registration Capture Advice
-
-(defun org-babel-duckdb-capture-registration-advice (result)
-  "Capture block registration info from RESULT for execution routing.
-
-Stores plist with :block-id and :exec-id in
-`org-babel-duckdb-last-registration'.
-
-Installed as :filter-return advice on
-`org-duckdb-blocks-register-execution'.
-
-RESULT is plist from registration function."
-  (when result
-    (setq org-babel-duckdb-last-registration result))
-  result)
+              (if (member "table" result-params)
+                  (org-babel-duckdb-table-or-scalar cleaned-output)
+                cleaned-output))))))))
 
 ;;;; Language Integration and Initialization
 
@@ -1319,12 +2020,7 @@ Uses `org-babel-where-is-src-block-result' to locate result region."
               (ansi-color-context-region nil))
           (ansi-color-apply-on-region beg end))))))
 
-(advice-add 'org-duckdb-blocks-register-execution :filter-return
-            #'org-babel-duckdb-capture-registration-advice)
-
 (add-hook 'org-babel-after-execute-hook 'org-babel-duckdb-babel-ansi)
-
-(org-duckdb-blocks-setup)
 
 (provide 'ob-duckdb)
 
