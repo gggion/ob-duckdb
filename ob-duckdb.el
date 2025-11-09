@@ -1508,7 +1508,7 @@ current source block.
 
 Returns exec-id string or nil if not found.
 
-Used by `org-babel-duckdb-cancel-current-execution'.
+Used by `org-babel-duckdb-cancel-block-at-point'.
 
 Also see `org-babel-execute:duckdb' for placeholder format."
   (save-excursion
@@ -1851,7 +1851,7 @@ EXEC-ID is execution UUID string.
 
 When interactive, provides completion from all queued executions.
 
-To cancel current block, use `org-babel-duckdb-cancel-current-execution'.
+To cancel current block, use `org-babel-duckdb-cancel-block-at-point'.
 To view running executions, see `org-babel-duckdb-show-queue'."
   (interactive
    (list (let ((queued-ids nil))
@@ -1893,7 +1893,7 @@ To view running executions, see `org-babel-duckdb-show-queue'."
                  exec-id)))))
 
 ;;;###autoload
-(defun org-babel-duckdb-cancel-current-execution ()
+(defun org-babel-duckdb-cancel-block-at-point ()
   "Cancel async execution for DuckDB block at point.
 
 Extracts exec-id from results placeholder.
