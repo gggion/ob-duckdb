@@ -1,8 +1,8 @@
 ;;; org-duckdb-blocks.el --- Track DuckDB block executions in Org files -*- lexical-binding: t; -*-
 
 ;; Author: gggion
-;; Version: 1.0.0
-;; Package-Requires: ((emacs "28.1") (org "9.5"))
+;; Version: 2.0.0
+;; Package-Requires: ((emacs "28.1") (org "9.5") (ob-duckdb "2.0.0"))
 ;; Keywords: org, duckdb, data
 ;; URL: https://github.com/gggion/ob-duckdb
 
@@ -19,10 +19,11 @@
 ;; Basic usage:
 ;;
 ;;     (require 'org-duckdb-blocks)
+;;     (setq org-duckdb-blocks-enable-tracking t)
 ;;     (org-duckdb-blocks-setup)
 ;;
-;; This automatically tracks all DuckDB block executions via advice on
-;; `org-babel-execute-src-block'.
+;; This automatically tracks all DuckDB block executions by observing
+;; ob-duckdb.el hooks.
 ;;
 ;; Key features:
 ;; - Persistent block identity via buffer-local properties
@@ -30,6 +31,7 @@
 ;; - Position tracking that survives document edits
 ;; - Navigation commands to revisit executed blocks
 ;; - Automatic cleanup of stale entries
+;; - Process tracking for cancellation support
 ;;
 ;; The package maintains three data structures:
 ;; - Registry: Maps block IDs to current positions and content
@@ -46,13 +48,12 @@
 ;; - `org-duckdb-blocks-recent' - Show recent executions
 ;; - `org-duckdb-blocks-execution-info' - Detailed execution information
 ;;
-;; For integration with ob-duckdb.el, see Info node `(ob-duckdb) Block Tracking'.
-
 ;;; Code:
 
 (require 'org-element)
 (require 'org-macs)
 (require 'org-id)
+
 ;;;; Customizable vars
 (defcustom org-duckdb-blocks-enable-tracking nil
   "Enable execution history and block tracking for debugging.
@@ -71,8 +72,7 @@ Enabling tracking also controls property insertion via
 
 Default is nil for minimal intrusion.
 
-Also see `org-duckdb-blocks-setup' to initialize tracking and
-Info node `(org-babel-duckdb) Block Tracking' for usage."
+Also see `org-duckdb-blocks-setup' to initialize tracking."
   :type 'boolean
   :group 'org-babel-duckdb
   :package-version '(ob-duckdb . "2.0.0"))
@@ -91,8 +91,7 @@ Only relevant when `org-duckdb-blocks-enable-tracking' is non-nil.
 Text property storage enables full tracking features without polluting
 document source.
 
-Also see `org-duckdb-blocks-update-properties' for property insertion
-and Info node `(org-babel-duckdb) Property Storage' for details."
+Also see `org-duckdb-blocks-update-properties' for property insertion."
   :type 'boolean
   :group 'org-babel-duckdb
   :package-version '(ob-duckdb . "2.0.0"))
@@ -189,13 +188,11 @@ Change requires calling `org-duckdb-blocks-clear' to resize buffer.")
   "Execution status tracking by execution ID.
 
 Keys are execution ID strings.
-Values are status symbols: running, completed, cancelled, error, warning.
+Values are status symbols: running, completed, cancelled, error, warning, completed-with-errors.
 
 Updated by `org-duckdb-blocks-update-execution-status'.
 Queried by `org-duckdb-blocks-get-execution-status' and
-`org-duckdb-blocks-get-running-executions'.
-
-Also stored in `:status' field of `org-duckdb-blocks-executions'.")
+`org-duckdb-blocks-get-running-executions'.")
 
 ;;;; History Management
 
@@ -251,13 +248,13 @@ and `org-duckdb-blocks-show-execution-status'."
   "Update execution STATUS for EXEC-ID with optional ERROR-INFO.
 
 EXEC-ID is normalized before lookup.
-STATUS is a symbol: running, completed, cancelled, error, warning.
+STATUS is a symbol: running, completed, cancelled, error, warning, completed-with-errors.
 ERROR-INFO is error description string (only for 'error status).
 
 Updates both `org-duckdb-blocks-execution-status' and the :status
 field in `org-duckdb-blocks-executions'.
 
-Called by ob-duckdb.el during execution lifecycle.
+Called by ob-duckdb.el hooks during execution lifecycle.
 Queried by `org-duckdb-blocks-get-execution-status'."
   (let ((exec-id (org-duckdb-blocks-normalize-id exec-id)))
     (puthash exec-id status org-duckdb-blocks-execution-status)
@@ -309,6 +306,8 @@ Adds :process field to execution record in `org-duckdb-blocks-executions'.
 Used by async execution to enable cancellation via
 `org-duckdb-blocks-get-process'.
 
+Called by hook handler when process starts.
+
 Also see `org-babel-duckdb-execute-async' and
 `org-babel-duckdb-cancel-execution'."
   (when-let ((exec-info (gethash exec-id org-duckdb-blocks-executions)))
@@ -343,8 +342,8 @@ Also see `org-duckdb-blocks-update-execution-status'."
              org-duckdb-blocks-executions)
     running))
 
-
 ;;;; Property Management
+
 (defun org-duckdb-blocks--store-id (block-id exec-id begin)
   "Store BLOCK-ID and EXEC-ID for block at BEGIN position.
 
@@ -537,37 +536,6 @@ Returns list of block IDs currently in buffer."
 
       current-buffer-blocks)))
 
-(defun org-duckdb-blocks-get-block-location (exec-id)
-  "Get (BUFFER . MARKER) location for execution EXEC-ID.
-
-Looks up execution in `org-duckdb-blocks-executions' to find block-id,
-then queries `org-duckdb-blocks-registry' for current location.
-
-Returns cons cell (BUFFER . MARKER) or nil if not found.
-
-Only works when `org-duckdb-blocks-enable-tracking' is enabled.
-
-Used as fallback by `org-babel-duckdb--find-result-location' when
-placeholder-based routing fails.
-
-Also see `org-duckdb-blocks-register-execution' for registration and
-`org-babel-duckdb--mark-async-placeholder' for primary routing."
-  (when-let* ((exec-info (gethash (org-duckdb-blocks-normalize-id exec-id)
-                                 org-duckdb-blocks-executions))
-              (block-id (plist-get exec-info :block-id))
-              (block-info (gethash (org-duckdb-blocks-normalize-id block-id)
-                                  org-duckdb-blocks-registry))
-              (buffer-name (plist-get block-info :buffer))
-              (file (plist-get block-info :file))
-              (begin (plist-get block-info :begin))
-              (buffer (or (and file (file-exists-p file) 
-                               (find-file-noselect file))
-                          (get-buffer buffer-name))))
-    (cons buffer (with-current-buffer buffer
-                   (save-excursion
-                     (goto-char begin)
-                     (point-marker))))))
-
 ;;;; Block Registration
 
 (defun org-duckdb-blocks-register-execution ()
@@ -588,7 +556,7 @@ When enabled, this is the core function capturing block state:
 Returns plist with :block-id and :exec-id for ob-duckdb.el, or nil
 if tracking disabled.
 
-Called by `org-babel-execute:duckdb' when tracking enabled.
+Called by hook handler when execution starts.
 
 For interactive use, see `org-duckdb-blocks-list' and
 `org-duckdb-blocks-recent' to view registered executions."
@@ -655,6 +623,41 @@ For interactive use, see `org-duckdb-blocks-list' and
                      (substring exec-id 0 8))
             
             (list :block-id block-id :exec-id exec-id)))))))
+
+;;;; Hook Handlers
+
+(defun org-duckdb-blocks--on-execution-started (exec-id session body params is-async-p element)
+  "Hook handler for execution start.
+
+EXEC-ID, SESSION, BODY, PARAMS, IS-ASYNC-P, ELEMENT are from hook.
+
+Registers execution via `org-duckdb-blocks-register-execution'.
+
+Installed by `org-duckdb-blocks-setup' on
+`org-babel-duckdb-execution-started-functions'."
+  (org-duckdb-blocks-register-execution))
+
+(defun org-duckdb-blocks--on-process-started (exec-id process)
+  "Hook handler for async process start.
+
+EXEC-ID and PROCESS are from hook.
+
+Stores process reference via `org-duckdb-blocks-store-process'.
+
+Installed by `org-duckdb-blocks-setup' on
+`org-babel-duckdb-async-process-started-functions'."
+  (org-duckdb-blocks-store-process exec-id process))
+
+(defun org-duckdb-blocks--on-execution-completed (exec-id status error-info)
+  "Hook handler for execution completion.
+
+EXEC-ID, STATUS, ERROR-INFO are from hook.
+
+Updates status via `org-duckdb-blocks-update-execution-status'.
+
+Installed by `org-duckdb-blocks-setup' on
+`org-babel-duckdb-execution-completed-functions'."
+  (org-duckdb-blocks-update-execution-status exec-id status error-info))
 
 ;;;; Navigation Commands
 
@@ -922,6 +925,7 @@ Status values from `org-duckdb-blocks-execution-status':
 - error: Failed with error
 - cancelled: User cancelled
 - warning: Completed with warnings
+- completed-with-errors: Completed with errors
 
 Also shows error info if status is `error.
 
@@ -955,32 +959,18 @@ Also see `org-duckdb-blocks-update-execution-status' for how status is set."
 
 ;;;; System Setup and Utilities
 
-(defun org-duckdb-blocks-register-advice (&rest _)
-  "Advice function registering DuckDB block execution.
-
-Added as :before advice to `org-babel-execute-src-block' by
-`org-duckdb-blocks-setup'.
-
-Checks if point is in DuckDB block and calls
-`org-duckdb-blocks-register-execution' if so.
-
-Arguments ignored - context from point position."
-  (when (org-in-src-block-p)
-    (let* ((el (org-element-context))
-           (el-full (org-element-at-point))
-           (is-duckdb (and (eq (car el) 'src-block)
-                          (string= (org-element-property :language el) "duckdb"))))
-      (when is-duckdb
-        (org-duckdb-blocks-register-execution)))))
-
 ;;;###autoload
 (defun org-duckdb-blocks-setup ()
   "Initialize DuckDB block tracking system if enabled.
 
 Only activates when `org-duckdb-blocks-enable-tracking' is non-nil.
 
-When enabled, adds advice to `org-babel-execute-src-block' to register
-executions. Safe to call multiple times (checks if advice already present).
+When enabled, adds hook handlers to observe ob-duckdb.el execution:
+- `org-babel-duckdb-execution-started-functions'
+- `org-babel-duckdb-async-process-started-functions'
+- `org-babel-duckdb-execution-completed-functions'
+
+Safe to call multiple times (checks if hooks already present).
 
 When disabled, block tracking remains inactive and ob-duckdb.el uses
 minimal state for async routing only.
@@ -989,17 +979,28 @@ To enable full tracking:
   (setq org-duckdb-blocks-enable-tracking t)
   (org-duckdb-blocks-setup)
 
-Main entry point for using this package.
-Called automatically by ob-duckdb.el on load."
+Main entry point for using this package."
   (interactive)
   (if (and (boundp 'org-duckdb-blocks-enable-tracking)
            org-duckdb-blocks-enable-tracking)
       (progn
-        (unless (advice-member-p 'org-duckdb-blocks-register-advice 
-                                'org-babel-execute-src-block)
-          (advice-add 'org-babel-execute-src-block :before 
-                      #'org-duckdb-blocks-register-advice)
-          (message "DuckDB block tracking activated")))
+        ;; Install hook handlers
+        (unless (member 'org-duckdb-blocks--on-execution-started
+                       org-babel-duckdb-execution-started-functions)
+          (add-hook 'org-babel-duckdb-execution-started-functions
+                    #'org-duckdb-blocks--on-execution-started))
+        
+        (unless (member 'org-duckdb-blocks--on-process-started
+                       org-babel-duckdb-async-process-started-functions)
+          (add-hook 'org-babel-duckdb-async-process-started-functions
+                    #'org-duckdb-blocks--on-process-started))
+        
+        (unless (member 'org-duckdb-blocks--on-execution-completed
+                       org-babel-duckdb-execution-completed-functions)
+          (add-hook 'org-babel-duckdb-execution-completed-functions
+                    #'org-duckdb-blocks--on-execution-completed))
+        
+        (message "DuckDB block tracking activated"))
     (message "DuckDB block tracking disabled (set org-duckdb-blocks-enable-tracking to enable)")))
 
 ;;;###autoload
