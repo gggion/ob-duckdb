@@ -543,7 +543,7 @@ Updates queue structure in `org-babel-duckdb--session-queues'.
 Removes completion-handler, send-data, and temp-err-file for completed execution.
 
 Triggers next execution via `org-babel-duckdb--session-send-next-request'
-if queue not empty.
+if queue not empty. Skips cancelled executions automatically.
 
 Called by `org-babel-duckdb--session-output-filter' when completion
 marker detected.
@@ -567,9 +567,20 @@ Also see `org-babel-duckdb--enqueue-execution' for queue initialization."
       ;; Update queue info
       (puthash session queue-info org-babel-duckdb--session-queues)
 
-      ;; Send next queued request if any
+      ;; Process next in queue, skipping cancelled
       (when pending
-        (org-babel-duckdb--session-send-next-request session)))))
+        (let ((next-exec-id (car pending)))
+          ;; Check if next execution was cancelled
+          (if (eq (org-babel-duckdb--get-exec-status next-exec-id) 'cancelled)
+              (progn
+                ;; Skip cancelled execution, dequeue and continue
+                (message "[ob-duckdb] Skipping cancelled execution %s"
+                         (substring next-exec-id 0 8))
+                ;; Recursively dequeue cancelled item
+                (org-babel-duckdb--dequeue-execution session next-exec-id))
+            
+            ;; Not cancelled, send normally
+            (org-babel-duckdb--session-send-next-request session)))))))
 
 (defun org-babel-duckdb--update-exec-status (exec-id status)
   "Update execution status for EXEC-ID to STATUS.
@@ -1841,10 +1852,14 @@ For programmatic access, use that function directly."
 (defun org-babel-duckdb-cancel-execution (exec-id)
   "Cancel async execution EXEC-ID.
 
-Sends SIGINT to process via `interrupt-process'.
-Updates status via `org-babel-duckdb--update-exec-status'.
+Cancellation behavior depends on execution position in queue:
+- Currently executing (position 1): Sends SIGINT via `interrupt-process'
+- Queued (position 2+): Marks as cancelled, skips when position reached
 
-Finds process by searching all active sessions for matching exec-id
+Updates status via `org-babel-duckdb--update-exec-status'.
+Fires `org-babel-duckdb-execution-completed-functions' hook.
+
+Finds execution by searching all active sessions for matching exec-id
 in their queues.
 
 EXEC-ID is execution UUID string.
@@ -1863,30 +1878,49 @@ To view running executions, see `org-babel-duckdb-show-queue'."
                (completing-read "Cancel execution: " queued-ids)
              (read-string "Execution ID: ")))))
 
-  (let ((process (cl-block find-process
-                   (maphash (lambda (session queue-info)
-                              (when (member exec-id (plist-get queue-info :pending))
-                                (when-let* ((session-buffer (gethash session org-babel-duckdb-sessions))
-                                            (proc (and (buffer-live-p session-buffer)
-                                                       (get-buffer-process session-buffer))))
-                                  (cl-return-from find-process proc))))
-                            org-babel-duckdb--session-queues)
-                   nil)))
+  (let ((found-session nil)
+        (queue-position nil))
+    
+    ;; Find session and position
+    (catch 'found
+      (maphash (lambda (session queue-info)
+                 (let* ((pending (plist-get queue-info :pending))
+                        (pos (cl-position exec-id pending :test #'equal)))
+                   (when pos
+                     (setq found-session session
+                           queue-position pos)
+                     (throw 'found t))))
+               org-babel-duckdb--session-queues))
 
-    (if (and process (process-live-p process))
-        (progn
-          (interrupt-process process)
-          (message "[ob-duckdb] Interrupted execution %s"
+    (if found-session
+        (cond
+         ;; Position 0: Currently executing, interrupt process
+         ((zerop queue-position)
+          (when-let* ((session-buffer (gethash found-session org-babel-duckdb-sessions))
+                      (process (and (buffer-live-p session-buffer)
+                                    (get-buffer-process session-buffer)))
+                      ((process-live-p process)))
+            (interrupt-process process)
+            (message "[ob-duckdb] Interrupted execution %s"
+                     (if (> (length exec-id) 8)
+                         (substring exec-id 0 8)
+                       exec-id))
+            
+            ;; Status update handled by completion-handler from process sentinel
+            ;; Don't call here to avoid duplicate hook firing
+            ))
+
+         ;; Position 1+: Queued, mark as cancelled without interrupting
+         (t
+          (org-babel-duckdb--update-exec-status exec-id 'cancelled)
+          (run-hook-with-args 'org-babel-duckdb-execution-completed-functions
+                              exec-id 'cancelled "User cancelled queued execution")
+          (message "[ob-duckdb] Marked queued execution %s as cancelled"
                    (if (> (length exec-id) 8)
                        (substring exec-id 0 8)
-                     exec-id))
-
-          ;; Update status
-          (org-babel-duckdb--update-exec-status exec-id 'cancelled)
-
-          ;; Fire completion hook
-          (run-hook-with-args 'org-babel-duckdb-execution-completed-functions
-                              exec-id 'cancelled "User interrupted"))
+                     exec-id))))
+      
+      ;; Not found in any queue
       (message "[ob-duckdb] Execution %s not found or already completed"
                (if (> (length exec-id) 8)
                    (substring exec-id 0 8)
