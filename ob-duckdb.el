@@ -77,6 +77,7 @@
 ;;; Code:
 
 (require 'ob)
+(require 'org-element)
 (require 'ansi-color)
 
 (defvar org-babel-default-header-args:duckdb
@@ -413,6 +414,20 @@ to work without full tracking enabled.
 
 Also see `org-babel-duckdb--get-exec-status'.")
 
+(defvar org-babel-duckdb--exec-names (make-hash-table :test 'equal)
+  "Maps exec-id to source block name for queue display.
+
+Keys are execution ID strings (UUIDs).
+Values are block name strings from #+NAME: directive, or nil.
+
+Only populated for async executions to enable meaningful queue display.
+Entries removed after execution completes.
+
+Updated by `org-babel-execute:duckdb' during async execution start.
+Queried by `org-babel-duckdb--refresh-queue-display' for display.
+
+Independent of org-duckdb-blocks tracking system.")
+
 ;;;; Queue Management Functions
 
 (defun org-babel-duckdb--session-send-next-request (session)
@@ -642,6 +657,7 @@ Also see `org-babel-duckdb-show-queue' for buffer creation and
                  (cl-loop for exec-id in pending
                           for idx from 1
                           for status = (org-babel-duckdb--get-exec-status exec-id)
+                          for name = (gethash exec-id org-babel-duckdb--exec-names)
                           for status-str = (pcase status
                                              ('executing "executing")
                                              ('completed "completed")
@@ -650,9 +666,10 @@ Also see `org-babel-duckdb-show-queue' for buffer creation and
                                              ('completed-with-errors "completed-with-errors")
                                              ('queued "")
                                              (_ ""))
-                          do (insert (format "    %d. %s%s\n"
+                          do (insert (format "    %d. %s%s%s\n"
                                              idx
                                              (substring exec-id 0 8)
+                                             (if name (format " %s" name) "")
                                              (if (string-empty-p status-str)
                                                  ""
                                                (format " (%s)" status-str)))))
@@ -1493,7 +1510,8 @@ marker detected."
                              final-content params result-params)))))))
 
                 ;; Clean up async registry
-                (remhash exec-id org-babel-duckdb--pending-async))
+                (remhash exec-id org-babel-duckdb--pending-async)
+                (remhash exec-id org-babel-duckdb--exec-names))
 
             (error
              (let ((error-msg (format "Completion handler error: %S" err)))
@@ -1992,6 +2010,10 @@ When disabled, only async executions are tracked minimally via
 
       (if use-async
           (progn
+            ;; Store block name for queue display
+            (when-let ((name (org-element-property :name element)))
+              (puthash exec-id name org-babel-duckdb--exec-names))
+
             ;; Store location for async routing
             (let ((marker (point-marker)))
               (puthash exec-id
