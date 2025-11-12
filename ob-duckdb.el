@@ -10,7 +10,7 @@
 ;; This file is NOT part of GNU Emacs.
 
 ;;; Commentary:
-
+;;
 ;; This package provides Org Babel integration for DuckDB, an in-process
 ;; analytical SQL database engine.
 ;;
@@ -91,6 +91,8 @@ Also see `org-babel-header-args:duckdb' for DuckDB-specific arguments.")
 
 (defconst org-babel-header-args:duckdb
   '((db        . :any)
+    (md        . :any)
+    (md-token  . :any)
     (format    . :any)
     (timer     . :any)
     (headers   . :any)
@@ -114,6 +116,33 @@ For standard Org Babel arguments, see Info node `(org) Using Header Arguments'."
   :prefix "org-babel-duckdb-"
   :link '(url-link :tag "Homepage" "https://github.com/gggion/ob-duckdb")
   :link '(emacs-commentary-link :tag "Commentary" "ob-duckdb"))
+
+;;;;; MotherDuck Integration
+(defcustom org-babel-duckdb-motherduck-token nil
+  "MotherDuck authentication token for database connections.
+
+Can be:
+- String: Direct token value (not recommended for security)
+- Function: Called with no arguments, returns token string
+- nil: No default token configured
+
+Recommended setup using function for security:
+
+  (setq org-babel-duckdb-motherduck-token
+        (lambda ()
+          (with-temp-buffer
+            (insert-file-contents \"~/.config/duckdb/.motherduck_token\")
+            (string-trim (buffer-string)))))
+
+Token can be overridden per-block with :md-token header argument.
+
+Only used when :md header argument specifies MotherDuck database."
+  :type '(choice
+          (string :tag "Token string (insecure)")
+          (function :tag "Function returning token")
+          (const :tag "No default token" nil))
+  :group 'org-babel-duckdb
+  :package-version '(ob-duckdb . "2.0.0"))
 
 ;;;;; Execution Control Options
 
@@ -430,6 +459,95 @@ Updated by `org-babel-execute:duckdb' during async execution start.
 Queried by `org-babel-duckdb--refresh-queue-display' for display.
 
 Independent of org-duckdb-blocks tracking system.")
+
+;;;; MotherDuck Integration Functions
+
+(defun org-babel-duckdb--resolve-motherduck-token (params)
+  "Resolve MotherDuck token from PARAMS or default configuration.
+
+Returns token string or signals user-error if unavailable.
+
+Resolution order:
+1. :md-token from PARAMS if present
+2. `org-babel-duckdb-motherduck-token' if configured
+3. Error if neither available
+
+When `org-babel-duckdb-motherduck-token' is a function, calls it
+with no arguments and expects string return value.
+
+Called by `org-babel-duckdb--validate-motherduck-params' during
+parameter validation."
+  (or
+   ;; Block-level override
+   (cdr (assq :md-token params))
+
+   ;; Default token
+   (when org-babel-duckdb-motherduck-token
+     (if (functionp org-babel-duckdb-motherduck-token)
+         (funcall org-babel-duckdb-motherduck-token)
+       org-babel-duckdb-motherduck-token))
+
+   ;; No token available
+   (user-error "[ob-duckdb] MotherDuck connection requires token. Set `org-babel-duckdb-motherduck-token' or use :md-token header argument")))
+
+(defun org-babel-duckdb--validate-motherduck-params (params)
+  "Validate MotherDuck-related parameters in PARAMS.
+
+Enforces rules:
+- :md and :db are mutually exclusive
+- :md-token requires :md to be present
+- :md requires available token
+
+Signals user-error on validation failure.
+
+Called by `org-babel-execute:duckdb' before execution.
+
+Also see `org-babel-duckdb--resolve-motherduck-token' for token resolution."
+  (let ((md-db (cdr (assq :md params)))
+        (local-db (cdr (assq :db params)))
+        (md-token (cdr (assq :md-token params))))
+
+    ;; Rule: :md and :db are mutually exclusive
+    (when (and md-db local-db)
+      (user-error "[ob-duckdb] Cannot specify both :md and :db. Use :md for MotherDuck or :db for local database"))
+
+    ;; Rule: :md-token requires :md
+    (when (and md-token (not md-db))
+      (user-error "[ob-duckdb] :md-token requires :md header argument"))
+
+    ;; Rule: :md requires token availability
+    (when md-db
+      (org-babel-duckdb--resolve-motherduck-token params))))
+
+(defun org-babel-duckdb--build-connection-string (params)
+  "Build DuckDB connection string from PARAMS.
+
+Returns connection string for MotherDuck or local database.
+
+MotherDuck format: \"md:DATABASE?motherduck_token=TOKEN\"
+Local format: \"/path/to/database.duckdb\" or \"\" for in-memory
+
+Resolves token via `org-babel-duckdb--resolve-motherduck-token'
+when :md present.
+
+Called by `org-babel-duckdb-initiate-session' and
+`org-babel-duckdb-execute-sync'.
+
+Also see `org-babel-duckdb--validate-motherduck-params' for validation."
+  (let ((md-db (cdr (assq :md params)))
+        (local-db (cdr (assq :db params))))
+    
+    (cond
+     ;; MotherDuck connection
+     (md-db
+      (let ((token (org-babel-duckdb--resolve-motherduck-token params)))
+        (format "md:%s?motherduck_token=%s" md-db token)))
+     
+     ;; Local database file
+     (local-db local-db)
+     
+     ;; In-memory database
+     (t ""))))
 
 ;;;; Queue Management Functions
 (defun org-babel-duckdb--collect-queue-entries ()
@@ -895,9 +1013,9 @@ Returns nil if session queue is marked for termination via
 :kill-on-completion header argument.
 
 Called by `org-babel-execute:duckdb' before enqueueing async execution."
-       (if-let ((queue-info (gethash session org-babel-duckdb--session-queues)))
-           (not (plist-get queue-info :termination-pending))
-         t))
+  (if-let ((queue-info (gethash session org-babel-duckdb--session-queues)))
+      (not (plist-get queue-info :termination-pending))
+    t))
 
 (defun org-babel-duckdb--session-output-filter (session)
   "Create output filter for SESSION handling FIFO async execution queue.
@@ -1012,8 +1130,13 @@ Otherwise, create new session with `comint-mode' and start DuckDB process.
 SESSION-NAME of nil or \"yes\" becomes \"default\".
 SESSION-NAME of \"none\" returns nil (no session).
 
-PARAMS alist may include :db for database file path (see
-`org-babel-duckdb-command').
+PARAMS alist may include:
+  :db for local database file path
+  :md for MotherDuck database name
+  :md-token for MotherDuck authentication override
+
+MotherDuck connections use `org-babel-duckdb--build-connection-string'
+to construct connection string with embedded token.
 
 Returns session buffer or nil.
 
@@ -1028,7 +1151,7 @@ For session management, see `org-babel-duckdb-delete-session' and
     (let* ((session-name (if (or (null session-name) (string= session-name "yes"))
                              "default" session-name))
            (buffer (org-babel-duckdb-get-session-buffer session-name))
-           (db-file (cdr (assq :db params)))
+           (connection-string (org-babel-duckdb--build-connection-string params))
            (process (and (buffer-live-p buffer) (get-buffer-process buffer))))
 
       (unless (and process (process-live-p process))
@@ -1040,11 +1163,13 @@ For session management, see `org-babel-duckdb-delete-session' and
             (setq-local comint-prompt-regexp "^D> ")
             (setq-local comint-process-echoes t))
 
-          ;; Store database file as buffer-local variable
-          (setq-local org-babel-duckdb-session-db-file db-file)
+          ;; Store connection string as buffer-local variable
+          (setq-local org-babel-duckdb-session-db-file connection-string)
 
           (let* ((cmd-args (list org-babel-duckdb-command))
-                 (cmd-args (if db-file (append cmd-args (list db-file)) cmd-args)))
+                 (cmd-args (if (not (string-empty-p connection-string))
+                               (append cmd-args (list connection-string))
+                             cmd-args)))
 
             (comint-exec buffer
                          (format "duckdb-%s" session-name)
@@ -1356,12 +1481,15 @@ Returns output string, possibly truncated (see `org-babel-duckdb-get-max-rows').
 Direct mode invokes `org-babel-duckdb-command' as subprocess with file I/O.
 Session mode delegates to `org-babel-duckdb-execute-session'.
 
+MotherDuck connections use `org-babel-duckdb--build-connection-string'
+to construct connection string with embedded token.
+
 Uses `org-babel-duckdb-write-temp-sql' for input file creation and
 `org-babel-duckdb-read-file-lines' for result capture with truncation.
 
 For async execution, see `org-babel-duckdb-execute-async'."
   (let* ((use-session-p (and session (not (string= session "none"))))
-         (db-file (cdr (assq :db params)))
+         (connection-string (org-babel-duckdb--build-connection-string params))
          (temp-in-file (org-babel-duckdb-write-temp-sql body))
          (temp-out-file (org-babel-temp-file "duckdb-out-"))
          (max-rows (org-babel-duckdb-get-max-rows params)))
@@ -1374,9 +1502,11 @@ For async execution, see `org-babel-duckdb-execute-async'."
 
       (let ((command (format "%s %s -init /dev/null -batch < %s > %s"
                              org-babel-duckdb-command
-                             (or db-file "")
-                             temp-in-file
-                             temp-out-file)))
+                             (if (not (string-empty-p connection-string))
+                                 (shell-quote-argument connection-string)
+                               "")
+                             (shell-quote-argument temp-in-file)
+                             (shell-quote-argument temp-out-file))))
         (org-babel-eval command "")
 
         (let ((result (org-babel-duckdb-read-file-lines temp-out-file max-rows)))
@@ -1478,7 +1608,7 @@ For synchronous execution, see `org-babel-duckdb-execute-sync'."
 
 (defun org-babel-duckdb--make-completion-handler
     (exec-id temp-out-file temp-err-file temp-script-file
-     params result-params session kill-on-completion)
+             params result-params session kill-on-completion)
   "Create completion handler for async execution EXEC-ID.
 
 Returns callback function invoked when execution completes.
@@ -1927,8 +2057,10 @@ To view remaining sessions, use `org-babel-duckdb-display-sessions'."
 (defun org-babel-duckdb-display-sessions ()
   "Display detailed information about all active DuckDB sessions.
 
-Shows session name, database file, status, and buffer name.
-Database file retrieved from buffer-local `org-babel-duckdb-session-db-file'.
+Shows session name, database connection, status, and buffer name.
+
+Database connection retrieved from buffer-local `org-babel-duckdb-session-db-file'.
+MotherDuck connections display as \"md:DATABASE\" without exposing token.
 
 Uses `org-babel-duckdb-list-sessions' to enumerate sessions.
 For programmatic access, use that function directly."
@@ -1940,11 +2072,16 @@ For programmatic access, use that function directly."
         (let* ((db-paths (mapcar
                           (lambda (entry)
                             (let* ((buffer (cdr entry))
-                                   (db-file (and (buffer-live-p buffer)
-                                                 (buffer-local-value 'org-babel-duckdb-session-db-file buffer))))
+                                   (connection-string (and (buffer-live-p buffer)
+                                                           (buffer-local-value 'org-babel-duckdb-session-db-file buffer))))
                               (cond
-                               ((null db-file) "in-memory")
-                               (t (abbreviate-file-name db-file)))))
+                               ((null connection-string) "in-memory")
+                               ((string-prefix-p "md:" connection-string)
+                                ;; Extract database name without exposing token
+                                (if (string-match "^md:\\([^?]+\\)" connection-string)
+                                    (format "md:%s" (match-string 1 connection-string))
+                                  "md:unknown"))
+                               (t (abbreviate-file-name connection-string)))))
                           sessions))
                (max-db-width (max 25 (apply #'max (mapcar #'length db-paths))))
                (name-width 20)
@@ -1960,25 +2097,20 @@ For programmatic access, use that function directly."
           (princ (make-string total-width ?-))
           (princ "\n")
 
-          (dolist (entry sessions)
-            (let* ((name (car entry))
-                   (buffer (cdr entry))
-                   (proc (and (buffer-live-p buffer) (get-buffer-process buffer)))
-                   (status (cond
-                            ((not (buffer-live-p buffer)) "BUFFER DEAD")
-                            ((not proc) "NO PROCESS")
-                            ((process-live-p proc) "ACTIVE")
-                            (t "TERMINATED")))
-                   (db-file (if (buffer-live-p buffer)
-                                (buffer-local-value 'org-babel-duckdb-session-db-file buffer)
-                              nil))
-                   (db-display (cond
-                                ((null db-file) "in-memory")
-                                (t (abbreviate-file-name db-file)))))
-              (princ (format format-string
-                             name
-                             db-display
-                             status)))))))))
+          (cl-loop for entry in sessions
+                   for db-display in db-paths
+                   do (let* ((name (car entry))
+                             (buffer (cdr entry))
+                             (proc (and (buffer-live-p buffer) (get-buffer-process buffer)))
+                             (status (cond
+                                      ((not (buffer-live-p buffer)) "BUFFER DEAD")
+                                      ((not proc) "NO PROCESS")
+                                      ((process-live-p proc) "ACTIVE")
+                                      (t "TERMINATED"))))
+                        (princ (format format-string
+                                       name
+                                       db-display
+                                       status)))))))))
 
 ;;;; Execution Cancellation Commands
 (defun org-babel-duckdb--presorted-completion-table (candidates)
@@ -2158,6 +2290,7 @@ PARAMS is alist of header arguments (see `org-babel-header-args:duckdb').
 
 Returns output string for sync execution, placeholder for async.
 
+Validates MotherDuck parameters via `org-babel-duckdb--validate-motherduck-params'.
 Validates async requirements (must have session).
 Validates :kill-on-completion requires :async yes.
 Validates session accepts executions when :kill-on-completion specified.
@@ -2172,6 +2305,10 @@ Block tracking is optional via org-duckdb-blocks.el.
 When disabled, only async executions are tracked minimally via
 `org-babel-duckdb--pending-async'."
   (message "[ob-duckdb] Starting execution")
+
+  ;; Validate MotherDuck parameters first
+  (org-babel-duckdb--validate-motherduck-params params)
+
   (let* ((session (cdr (assq :session params)))
          (use-async (and (cdr (assq :async params))
                          (string= (cdr (assq :async params)) "yes")))
