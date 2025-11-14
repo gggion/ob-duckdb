@@ -264,12 +264,12 @@ Also see `org-babel-duckdb-progress-display' for per-execution feedback."
   :group 'org-babel-duckdb
   :package-version '(ob-duckdb . "2.0.0"))
 
-(defcustom org-babel-duckdb-queue-position 'bottom
+(defcustom org-babel-duckdb-queue-position 'side
   "Where to display queue monitor buffer.
 
 Values:
-  bottom - Bottom side window (default)
-  side   - Right side window
+  bottom - Bottom side window
+  side   - Right side window (default)
 
 Applies to both auto-display and manual `org-babel-duckdb-show-queue'.
 
