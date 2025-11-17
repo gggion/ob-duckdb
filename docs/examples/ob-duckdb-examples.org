@@ -2,7 +2,7 @@
 #+PROPERTY: header-args:duckdb :results output :wrap example
 #+begin_quote
 [!WARNING]
-This file is meant to be seen either [[https://raw.githubusercontent.com/gggion/ob-duckdb/refs/heads/refactor/async-performance/docs/ob-duckdb-examples.org][raw]] or in an org-mode buffer.
+This file is meant to be seen either [[https://raw.githubusercontent.com/gggion/ob-duckdb/refs/heads/refactor/async-performance/docs/examples/ob-duckdb-examples.org][raw]] or in an org-mode buffer.
 You wont be able to see any of the headers in the markdown view.
 #+end_quote
 

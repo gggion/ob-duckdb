@@ -29,7 +29,7 @@ leaving Emacs.
 
 #+begin_quote
 [!TIP]
-You can check out more examples for all ob-duckdb functionalities in [[docs/ob-duckdb-examples.org]]
+You can check out more examples for all ob-duckdb functionalities in [[docs/examples/ob-duckdb-examples.org]]
 #+end_quote
 
 #+begin_html
