@@ -1134,18 +1134,20 @@ WHERE revenue > $threshold;
 
 *** Accessing Table Cells
 
+/Defining a table with variables to be used/:
+
+: #+NAME: var_table
+: | key       | value                                                                           |
+: |-----------+---------------------------------------------------------------------------------|
+: | _columns  | #1,#2,#4                                                                        |
+: | _tp_col   | tpep_pickup_datetime                                                            |
+: | _exact_tp | '2025-09-01 00:06:07'                                                           |
+: | _max_rows | 5                                                                               |
+: | _url      | https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-09.parquet |
+
+
 #+begin_html 
 <table align="center">
-<tr><td colspan=2 align="center">
-<pre>#+NAME: var_table 
-,| key       | value                                                                           |
-,|-----------+---------------------------------------------------------------------------------|
-,| _columns  | #1,#2,#4                                                                        |
-,| _tp_col   | tpep_pickup_datetime                                                            |
-,| _exact_tp | '2025-09-01 00:06:07'                                                           |
-,| _max_rows | 5                                                                               |
-,| _url      | https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-09.parquet |</pre>Defining a table with variables to be used </td></tr>
-
 <tr><th width="300px">Usage</th><th width="700px">Results</th></tr>
 <tr></tr>
 <tr><td>
