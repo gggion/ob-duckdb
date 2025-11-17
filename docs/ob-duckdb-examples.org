@@ -12,6 +12,7 @@ emacs or look at the raw version in github.
 :TOC:      :include siblings :depth 2 :ignore this
 :END:
 :CONTENTS:
+- [[#async-queuing-with-real-data][Async Queuing with Real Data]]
 - [[#core-execution-modes][Core Execution Modes]]
   - [[#basic-synchronous-execution][Basic Synchronous Execution]]
   - [[#session-based-execution][Session-Based Execution]]
@@ -121,13 +122,139 @@ emacs or look at the raw version in github.
   - [[#issue-async-result-routing-after-edit][Issue: Async Result Routing After Edit]]
   - [[#issue-session-cleanup-on-buffer-kill][Issue: Session Cleanup on Buffer Kill]]
   - [[#issue-queue-lock-persistence][Issue: Queue Lock Persistence]]
-- [[#examples-from-the-docs][Examples from the docs]]
-  - [[#readme-example-1-basic-query][README Example 1: Basic Query]]
-  - [[#readme-example-2-database-file][README Example 2: Database File]]
-  - [[#readme-example-3-async-execution][README Example 3: Async Execution]]
-  - [[#readme-example-4-session-persistence][README Example 4: Session Persistence]]
 - [[#cleanup][Cleanup]]
 :END:
+
+* Async Queuing with Real Data
+:PROPERTIES:
+:CUSTOM_ID: async-queuing-with-real-data
+:END:
+#+begin_quote
+[!NOTE]
+This example contains most of the new async capabilities in v2.0.0
+
+Try this:
+1. Copy the code in this section , including the elisp source block
+2. Execute the elisp block
+4. Cancel different executions to see queue behavior
+5. Try adding more blocks to the queues while they're running
+6. Watch the queue display auto-update 
+#+end_quote
+
+This example demonstrates multiple capabilities:
+- *Asynchronous execution with FIFO queuing* - queries in each queue run sequentially
+- *Multi-session queue tracking* - two independent queues running simultaneously  
+- *Cancelling executions* - cancel queued items before they start
+- *Variable substitution* - URLs from named blocks
+- *Result truncation* - =:max-rows= truncates large results 
+- *Named blocks* - readable queue display with meaningful labels
+- *Some output formats* - jsonl, csv, markdown
+- *Session auto-termination* - =:kill-on-completion= cleanup
+- *Programmatic interaction* - batch execution via elisp
+
+First we'll define data sources, then 4 async source blocks:
+- 2 that will run in session ~showcase-1~
+- 2 that will run in session ~showcase-2~, one of these is a ~.sleep~ command that
+  simulates a long running query
+
+#+NAME: yellow-taxi-url
+: https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2025-09.parquet
+
+#+NAME: fhv-taxi-url
+: https://d37ci6vzurychx.cloudfront.net/trip-data/fhv_tripdata_2025-08.parquet
+
+#+NAME: green-taxi-url
+: https://d37ci6vzurychx.cloudfront.net/trip-data/green_tripdata_2025-09.parquet
+
+#+NAME: query-yellow-taxi
+#+HEADER: :var parquet_url=yellow-taxi-url
+#+begin_src duckdb :async yes :session showcase-1 :max-rows 10 :format jsonl
+SELECT * FROM read_parquet('parquet_url') LIMIT 500000;
+#+end_src
+
+#+NAME: query-fhv-taxi
+#+HEADER: :var parquet_url=fhv-taxi-url
+#+begin_src duckdb :async yes :session showcase-1 :max-rows 10 :format csv :kill-on-completion yes
+SELECT * FROM read_parquet('parquet_url') LIMIT 1000000;
+#+end_src
+
+#+NAME: sleep-command-block
+#+begin_src duckdb :async yes :session showcase-2 :format markdown 
+-- This block uses the DuckDB .shell dot-command to execute a shell command.
+-- We use it to simulate a long-running query (100 seconds) for demonstration.
+-- In real usage, this would be a complex analytical query.
+.shell sleep 100 
+#+end_src
+
+#+NAME: query-green-taxi
+#+HEADER: :var parquet_url=green-taxi-url
+#+begin_src duckdb :async yes :session showcase-2 :format markdown :kill-on-completion yes
+-- This block will finish only when the sleep block executions finish or are cancelled
+SELECT * FROM read_parquet('parquet_url') LIMIT 10;
+#+end_src
+
+elisp orchestrated workflow
+#+begin_src emacs-lisp
+;; elisp orchestrated workflow
+(let ((queue-contents nil))
+  (save-excursion
+    
+    ;; Execute both queries (session 1)
+    (org-babel-goto-named-src-block "query-yellow-taxi") (org-babel-execute-src-block)
+    (org-babel-goto-named-src-block "query-fhv-taxi") (org-babel-execute-src-block)
+
+    ;; we execute the sleep command twice  (session 2)
+    (org-babel-goto-named-src-block "sleep-command-block") (org-babel-execute-src-block)
+    (org-babel-goto-named-src-block "sleep-command-block") (org-babel-execute-src-block)
+
+    ;; then we execute the query-green-taxi query (session 2)
+    (org-babel-goto-named-src-block "query-green-taxi") (org-babel-execute-src-block)
+
+    ;; then we cancel the last execution of the sleep command (session 2)
+    (org-babel-goto-named-src-block "sleep-command-block") (org-babel-duckdb-cancel-block-at-point)
+)
+  
+  ;; Capture queue state
+  (sleep-for 2)
+  (when (get-buffer "*DuckDB Async Queue*")
+    (with-current-buffer "*DuckDB Async Queue*"
+      (setq queue-contents (buffer-string))))
+  
+  queue-contents)
+#+end_src
+
+You'll see something like this:
+
+#+begin_example
+DuckDB Async Execution Queues
+==============================
+Last updated: 15:58:48
+                                                ╔════════════════════════════════════════════════════╗
+Session: showcase [marked for termination] ━━━━━▶session will be deleted after last block finishes   ║
+  Pending: 2 execution(s)                       ╚════════════════════════════════════════════════════╝
+  Queue:                                        ╔════════════════════════════════════════════════════╗
+    1. 168ab2f0 query-yellow-taxi (executing)╺━━▶Currently executing queue on parquet file           ║
+    2. eaf05363 query-fhv-taxi (kill-session)╺━━▶Will run after #1 completes, then terminate session.║
+                                                ║Also blocks further executions in this queue        ║
+                                                ╚════════════════════════════════════════════════════╝
+Session: showcase-2 [marked for termination]
+  Pending: 3 execution(s)
+  Queue:                                         ╔═══════════════════════════════════════════════════╗
+    1. aaedacb7 sleep-command-block (executing)╺━▶Currently executing src block on session 2         ║
+    2. 1c7a604b sleep-command-block (cancelled)╺━▶Canceled executions are skipped over               ║
+    3. 94935df3 query-green-taxi (kill-session)╺━▶If we cancel this execution, the lock on this queue║
+                                                 ║will be lifted and we'll be able to execute more   ║
+                                                 ║blocks in this session.                            ║
+                                                 ╚═══════════════════════════════════════════════════╝
+#+end_example
+
+While the first sleep command runs, you can also also try and execute this source block in session ~showcase-2~:
+#+begin_src duckdb :session showcase-2 :async yes
+SELECT * FROM generate_series(1, 5) AS t(n);
+#+end_src
+
+You'll notice it's not possible due to the lock on the queue, to lift the lock
+you can cancel cancel the ~sleep-command-block~ with ~M-x org-babel-duckdb-cancel-execution~ and try again. 
 
 * Core Execution Modes
 :PROPERTIES:
@@ -1638,65 +1765,6 @@ SELECT 'Terminator' AS status;
 #+NAME: test-regression-verify-lock-lifted
 #+begin_src duckdb :session lock-test :async yes
 SELECT 'Lock should be lifted' AS status;
-#+end_src
-
-* Examples from the docs
-:PROPERTIES:
-:CUSTOM_ID: examples-from-the-docs
-:END:
-** README Example 1: Basic Query
-:PROPERTIES:
-:CUSTOM_ID: readme-example-1-basic-query
-:END:
-
-#+NAME: doc-example-basic
-#+begin_src duckdb
-SELECT * FROM generate_series(1, 5) AS s(num);
-#+end_src
-
-** README Example 2: Database File
-:PROPERTIES:
-:CUSTOM_ID: readme-example-2-database-file
-:END:
-
-#+NAME: doc-example-db-file
-#+begin_src duckdb :db /tmp/readme-example.duckdb
-CREATE TABLE IF NOT EXISTS test_table (
-  id INTEGER,
-  name VARCHAR,
-  created_at TIMESTAMP
-);
-INSERT INTO test_table VALUES
-  (1, 'First entry', CURRENT_TIMESTAMP),
-  (2, 'Second entry', CURRENT_TIMESTAMP);
-SELECT * FROM test_table;
-#+end_src
-
-** README Example 3: Async Execution
-:PROPERTIES:
-:CUSTOM_ID: readme-example-3-async-execution
-:END:
-
-#+NAME: doc-example-async
-#+begin_src duckdb :async yes :session readme-async :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'
-SELECT * FROM read_parquet('parquet_url') WHERE id < 10;
-#+end_src
-
-** README Example 4: Session Persistence
-:PROPERTIES:
-:CUSTOM_ID: readme-example-4-session-persistence
-:END:
-
-#+NAME: doc-example-session-1
-#+begin_src duckdb :session readme-session
-CREATE TEMPORARY TABLE temp_data AS
-  SELECT * FROM generate_series(1, 10) AS t(num);
-SELECT 'Table created' AS status;
-#+end_src
-
-#+NAME: doc-example-session-2
-#+begin_src duckdb :session readme-session
-SELECT SUM(num) AS total, AVG(num) AS average FROM temp_data;
 #+end_src
 
 * Cleanup

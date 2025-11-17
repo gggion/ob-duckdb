@@ -60,6 +60,22 @@ You can check out more examples for all ob-duckdb functionalities in [[docs/ob-d
 
 
 * Images
+[[https://github.com/gggion/ob-duckdb/blob/screenshots/duckdb-queue-cancel-showcase-quick.gif]]
+
+[[https://github.com/gggion/ob-duckdb/blob/screenshots/duckdb-queue-showcase-quick1.gif]]
+
+* Video demos
+** General usage
+Using babel variables to store a parquet url and querying it, output multiple
+formats and test line truncation and async capabilities.
+
+https://github.com/user-attachments/assets/7cfd6c71-617b-4c7d-b256-1418ac993d0e
+
+** Queue demo
+Here's a showcase of the queue functionality, we can now closely monitor async
+executions across multiple sessions.
+
+https://github.com/user-attachments/assets/847dbf3c-4f81-46ac-9743-c2a321243fb0
 * Contents :noexport:
 :PROPERTIES:
 :TOC:      :include siblings :depth 1 :ignore this
@@ -124,12 +140,12 @@ First we'll define 3 data sources, then 4 async source blocks:
 ,#+NAME: query-yellow-taxi
 ,#+HEADER: :var parquet_url=yellow-taxi-url
 ,#+begin_src duckdb :async yes :session showcase-1 :max-rows 10 :format jsonl
-CREATE TEMP TABLE yello_taxi_data AS
+CREATE TEMP TABLE yellow_taxi_data AS
 SELECT * FROM read_parquet('parquet_url') LIMIT 1000000;
 -- verifying row count of table
-SELECT COUNT(*) as row_count FROM yello_taxi_data;
+SELECT COUNT(*) as row_count FROM yellow_taxi_data;
 -- despite 1000000 records and selecting all, we truncated output to 10 lines
-SELECT * FROM yello_taxi_data;
+SELECT * FROM yellow_taxi_data;
 ,#+end_src
 
 ,#+NAME: query-fhv-taxi
@@ -230,7 +246,6 @@ You'll notice it's not possible due to the lock on the queue, to lift the lock y
   work 2. 483c395d query-2
   work 3. 582d6fcf query-3
 #+end_example
-
 * Key Features
 :PROPERTIES:
 :CUSTOM_ID: key-features
