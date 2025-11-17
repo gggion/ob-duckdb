@@ -1,0 +1,2068 @@
+#+title: DuckDB - STATEMENTS
+#+PROPERTY: header-args:duckdb :results output :wrap example
+
+Most examples were , with some modifications
+to make them easier to execute as source blocks.
+
+This is a collection of DuckDB statement examples taken directly from the duckdb
+wiki, with some small modifications to make use of sessions or overral
+showcasing of ob-duckdb features. 
+
+* Organization
+A. *Logical progression* - Basic -> Advanced
+B. *Session management* - Related blocks share sessions
+C. *Clear dependencies* - Blocks that depend on previous data are grouped
+D. *ob-duckdb features* used - Integrate async, variables, formats, etc.
+E. *Cleanup sections* - Grouped at the end of major sections
+
+* CONTENTS :noexport:
+:PROPERTIES:
+:TOC:      :include siblings :depth 2 :ignore this
+:END:
+:CONTENTS:
+- [[#1-database-and-schema-management][1. Database and Schema Management]]
+  - [[#11-initial-setup][1.1 Initial Setup]]
+  - [[#12-attaching-databases][1.2 Attaching Databases]]
+  - [[#13-schema-creation-and-usage][1.3 Schema Creation and Usage]]
+  - [[#14-database-to-database-operations][1.4 Database-to-Database Operations]]
+  - [[#15-cleanup-database-management][1.5 Cleanup Database Management]]
+- [[#2-table-creation-and-schema-evolution][2. Table Creation and Schema Evolution]]
+  - [[#21-basic-table-creation][2.1 Basic Table Creation]]
+  - [[#22-table-alterations---adding-columns][2.2 Table Alterations - Adding Columns]]
+  - [[#23-table-alterations---modifying-columns][2.3 Table Alterations - Modifying Columns]]
+  - [[#24-table-alterations---constraints-and-defaults][2.4 Table Alterations - Constraints and Defaults]]
+  - [[#25-table-renaming][2.5 Table Renaming]]
+  - [[#26-generated-columns][2.6 Generated Columns]]
+  - [[#27-tables-with-constraints][2.7 Tables with Constraints]]
+  - [[#28-cleanup-table-basics][2.8 Cleanup Table Basics]]
+- [[#3-relationships-and-foreign-keys][3. Relationships and Foreign Keys]]
+  - [[#31-simple-foreign-keys][3.1 Simple Foreign Keys]]
+  - [[#32-composite-foreign-keys][3.2 Composite Foreign Keys]]
+  - [[#33-testing-foreign-key-constraints][3.3 Testing Foreign Key Constraints]]
+  - [[#34-cleanup-relationships][3.4 Cleanup Relationships]]
+- [[#4-custom-data-types][4. Custom Data Types]]
+  - [[#41-creating-custom-types][4.1 Creating Custom Types]]
+  - [[#42-using-custom-types][4.2 Using Custom Types]]
+  - [[#43-cleanup-custom-types][4.3 Cleanup Custom Types]]
+- [[#5-views-and-comments][5. Views and Comments]]
+  - [[#51-creating-and-managing-views][5.1 Creating and Managing Views]]
+  - [[#52-adding-comments][5.2 Adding Comments]]
+  - [[#53-cleanup-views][5.3 Cleanup Views]]
+- [[#6-sequences-and-auto-increment][6. Sequences and Auto-Increment]]
+  - [[#61-creating-sequences][6.1 Creating Sequences]]
+  - [[#62-using-sequences-in-tables][6.2 Using Sequences in Tables]]
+  - [[#63-cleanup-sequences][6.3 Cleanup Sequences]]
+- [[#7-data-insertion-techniques][7. Data Insertion Techniques]]
+  - [[#71-basic-insertion][7.1 Basic Insertion]]
+  - [[#72-positional-vs-named-insertion][7.2 Positional vs Named Insertion]]
+  - [[#73-named-column-insertion][7.3 Named Column Insertion]]
+  - [[#74-insertion-with-returning][7.4 Insertion with RETURNING]]
+  - [[#75-cleanup-insertion][7.5 Cleanup Insertion]]
+- [[#8-conflict-resolution-upsert][8. Conflict Resolution (UPSERT)]]
+  - [[#81-basic-conflict-resolution][8.1 Basic Conflict Resolution]]
+  - [[#82-complex-conflict-resolution][8.2 Complex Conflict Resolution]]
+  - [[#83-cleanup-upsert][8.3 Cleanup Upsert]]
+- [[#9-data-modification-update-and-delete][9. Data Modification (UPDATE and DELETE)]]
+  - [[#91-basic-updates][9.1 Basic Updates]]
+  - [[#92-complex-updates-with-subqueries][9.2 Complex Updates with Subqueries]]
+  - [[#93-delete-operations][9.3 Delete Operations]]
+  - [[#94-cleanup-modification][9.4 Cleanup Modification]]
+- [[#10-pivot-and-unpivot-operations][10. Pivot and Unpivot Operations]]
+  - [[#101-creating-test-data-for-pivot][10.1 Creating Test Data for Pivot]]
+  - [[#102-basic-pivot-operations][10.2 Basic Pivot Operations]]
+  - [[#103-pivot-with-grouping][10.3 Pivot with Grouping]]
+  - [[#104-pivot-with-column-selection][10.4 Pivot with Column Selection]]
+  - [[#105-pivot-with-multiple-aggregations][10.5 Pivot with Multiple Aggregations]]
+  - [[#106-pivot-in-subqueries-and-ctes][10.6 Pivot in Subqueries and CTEs]]
+  - [[#107-sql-standard-pivot-syntax][10.7 SQL Standard Pivot Syntax]]
+  - [[#108-creating-test-data-for-unpivot][10.8 Creating Test Data for Unpivot]]
+  - [[#109-basic-unpivot-operations][10.9 Basic Unpivot Operations]]
+  - [[#1010-unpivot-with-column-expressions][10.10 Unpivot with Column Expressions]]
+  - [[#1011-unpivot-with-multiple-value-columns][10.11 Unpivot with Multiple Value Columns]]
+  - [[#1012-sql-standard-unpivot-syntax][10.12 SQL Standard Unpivot Syntax]]
+  - [[#1013-cleanup-pivotunpivot][10.13 Cleanup Pivot/Unpivot]]
+- [[#11-macros-and-user-defined-functions][11. Macros and User-Defined Functions]]
+  - [[#111-simple-macros][11.1 Simple Macros]]
+  - [[#112-macros-with-default-parameters][11.2 Macros with Default Parameters]]
+  - [[#113-table-returning-macros][11.3 Table-Returning Macros]]
+  - [[#114-cleanup-macros][11.4 Cleanup Macros]]
+- [[#12-variables-and-settings][12. Variables and Settings]]
+  - [[#121-setting-variables][12.1 Setting Variables]]
+  - [[#122-advanced-variable-usage][12.2 Advanced Variable Usage]]
+  - [[#123-system-settings][12.3 System Settings]]
+  - [[#124-cleanup-variables][12.4 Cleanup Variables]]
+- [[#13-transaction-management][13. Transaction Management]]
+  - [[#131-basic-transactions][13.1 Basic Transactions]]
+  - [[#132-transaction-rollback][13.2 Transaction Rollback]]
+  - [[#133-checkpoints][13.3 Checkpoints]]
+  - [[#134-cleanup-transactions][13.4 Cleanup Transactions]]
+- [[#14-window-functions-and-analytical-queries][14. Window Functions and Analytical Queries]]
+  - [[#141-creating-test-data][14.1 Creating Test Data]]
+  - [[#142-basic-window-functions][14.2 Basic Window Functions]]
+  - [[#143-using-qualify][14.3 Using QUALIFY]]
+  - [[#144-cleanup-window-functions][14.4 Cleanup Window Functions]]
+- [[#15-aggregation-and-grouping][15. Aggregation and Grouping]]
+  - [[#151-creating-test-data][15.1 Creating Test Data]]
+  - [[#152-basic-aggregation][15.2 Basic Aggregation]]
+  - [[#153-aggregation-with-having][15.3 Aggregation with HAVING]]
+  - [[#154-cleanup-aggregation][15.4 Cleanup Aggregation]]
+- [[#16-complex-data-types][16. Complex Data Types]]
+  - [[#161-json-operations][16.1 JSON Operations]]
+  - [[#162-list-operations][16.2 List Operations]]
+  - [[#163-map-operations][16.3 Map Operations]]
+  - [[#164-struct-operations][16.4 Struct Operations]]
+  - [[#165-cleanup-complex-types][16.5 Cleanup Complex Types]]
+- [[#17-data-importexport-file-operations][17. Data Import/Export (File Operations)]]
+  - [[#171-csv-operations][17.1 CSV Operations]]
+  - [[#172-export-to-csv][17.2 Export to CSV]]
+  - [[#173-parquet-operations][17.3 Parquet Operations]]
+  - [[#174-cleanup-file-operations][17.4 Cleanup File Operations]]
+- [[#18-system-introspection][18. System Introspection]]
+  - [[#181-database-metadata][18.1 Database Metadata]]
+  - [[#182-table-information][18.2 Table Information]]
+  - [[#183-cleanup-introspection][18.3 Cleanup Introspection]]
+- [[#19-query-analysis-and-optimization][19. Query Analysis and Optimization]]
+  - [[#191-query-plans][19.1 Query Plans]]
+  - [[#192-query-analysis][19.2 Query Analysis]]
+  - [[#193-cleanup-analysis][19.3 Cleanup Analysis]]
+- [[#20-data-sampling][20. Data Sampling]]
+  - [[#201-creating-sample-data][20.1 Creating Sample Data]]
+  - [[#202-percentage-sampling][20.2 Percentage Sampling]]
+  - [[#203-row-count-sampling][20.3 Row Count Sampling]]
+  - [[#204-cleanup-sampling][20.4 Cleanup Sampling]]
+- [[#21-ob-duckdb-feature-integration][21. ob-duckdb Feature Integration]]
+  - [[#211-variable-substitution-with-duckdb][21.1 Variable Substitution with DuckDB]]
+  - [[#212-table-lookup-variables][21.2 Table Lookup Variables]]
+  - [[#213-async-with-progress-monitoring][21.3 Async with Progress Monitoring]]
+  - [[#214-multiple-output-formats][21.4 Multiple Output Formats]]
+  - [[#215-output-to-buffer][21.5 Output to Buffer]]
+  - [[#216-prologue-and-epilogue][21.6 Prologue and Epilogue]]
+  - [[#217-kill-on-completion][21.7 Kill on Completion]]
+  - [[#218-cleanup-ob-duckdb-features][21.8 Cleanup ob-duckdb Features]]
+- [[#22-performance-testing][22. Performance Testing]]
+  - [[#221-large-dataset-operations][22.1 Large Dataset Operations]]
+  - [[#222-join-performance][22.2 Join Performance]]
+  - [[#223-cleanup-performance][22.3 Cleanup Performance]]
+- [[#23-final-cleanup][23. Final Cleanup]]
+  - [[#231-session-cleanup][23.1 Session Cleanup]]
+  - [[#232-reset-customizations][23.2 Reset Customizations]]
+:END:
+
+
+* 1. Database and Schema Management
+:PROPERTIES:
+:CUSTOM_ID: 1-database-and-schema-management
+:END:
+** 1.1 Initial Setup
+:PROPERTIES:
+:CUSTOM_ID: 11-initial-setup
+:END:
+#+NAME: db-setup-basic
+#+begin_src duckdb :session db-management
+-- Analyze database statistics
+ANALYZE;
+
+-- Show current databases
+SHOW DATABASES;
+#+end_src
+** 1.2 Attaching Databases
+:PROPERTIES:
+:CUSTOM_ID: 12-attaching-databases
+:END:
+#+NAME: db-attach-memory
+#+begin_src duckdb :session db-management
+-- Attach in-memory database
+ATTACH ':memory:' AS memory_db;
+
+-- Attach file-based database
+ATTACH 'test_new_db.duckdb' AS new_db;
+
+-- Verify attachments
+SHOW DATABASES;
+#+end_src
+
+** 1.3 Schema Creation and Usage
+:PROPERTIES:
+:CUSTOM_ID: 13-schema-creation-and-usage
+:END:
+#+NAME: db-schema-create
+#+begin_src duckdb :session db-management
+-- Create schema in attached database
+CREATE SCHEMA IF NOT EXISTS new_db.my_schema;
+
+-- Switch to new schema
+USE new_db.my_schema;
+
+-- Verify current schema
+SELECT current_schema();
+#+end_src
+
+** 1.4 Database-to-Database Operations
+:PROPERTIES:
+:CUSTOM_ID: 14-database-to-database-operations
+:END:
+#+NAME: db-to-db-copy
+#+begin_src duckdb :session db-management
+-- Create source database with data
+ATTACH ':memory:' AS db1;
+CREATE TABLE db1.sample_data AS SELECT 42 AS x, 3 AS y;
+CREATE OR REPLACE MACRO db1.two_x_plus_y(x, y) AS 2 * x + y;
+
+-- Create target database
+ATTACH ':memory:' AS db2;
+
+-- Copy schema and data
+COPY FROM DATABASE db1 TO db2;
+
+-- Verify copy
+SELECT db2.two_x_plus_y(x, y) AS z FROM db2.sample_data;
+#+end_src
+
+** 1.5 Cleanup Database Management
+:PROPERTIES:
+:CUSTOM_ID: 15-cleanup-database-management
+:END:
+
+#+begin_src elisp
+(org-babel-duckdb-delete-session "db-management")
+#+end_src
+
+* 2. Table Creation and Schema Evolution
+:PROPERTIES:
+:CUSTOM_ID: 2-table-creation-and-schema-evolution
+:END:
+** 2.1 Basic Table Creation
+:PROPERTIES:
+:CUSTOM_ID: 21-basic-table-creation
+:END:
+#+NAME: table-basic-create
+#+begin_src duckdb :session table-basics
+-- Create simple table
+CREATE TABLE integers (i INTEGER, j INTEGER);
+
+-- Describe structure
+DESCRIBE integers;
+
+-- Insert sample data
+INSERT INTO integers VALUES (1, 10), (2, 20), (3, 30);
+SELECT * FROM integers;
+#+end_src
+
+** 2.2 Table Alterations - Adding Columns
+:PROPERTIES:
+:CUSTOM_ID: 22-table-alterations---adding-columns
+:END:
+#+NAME: table-alter-add-columns
+#+begin_src duckdb :session table-basics
+-- Add column without default
+ALTER TABLE integers ADD COLUMN k INTEGER;
+
+-- Add column with default value
+ALTER TABLE integers ADD COLUMN l INTEGER DEFAULT 10;
+
+-- Verify changes
+DESCRIBE integers;
+SELECT * FROM integers;
+#+end_src
+
+** 2.3 Table Alterations - Modifying Columns
+:PROPERTIES:
+:CUSTOM_ID: 23-table-alterations---modifying-columns
+:END:
+#+NAME: table-alter-modify-columns
+#+begin_src duckdb :session table-basics
+-- Drop column
+ALTER TABLE integers DROP k;
+
+-- Change column type
+ALTER TABLE integers ALTER i TYPE VARCHAR;
+
+-- Change type with transformation
+ALTER TABLE integers ALTER i SET DATA TYPE VARCHAR USING concat(i, '_', j);
+
+-- Verify changes
+DESCRIBE integers;
+SELECT * FROM integers;
+#+end_src
+
+** 2.4 Table Alterations - Constraints and Defaults
+:PROPERTIES:
+:CUSTOM_ID: 24-table-alterations---constraints-and-defaults
+:END:
+#+NAME: table-alter-constraints
+#+begin_src duckdb :session table-basics
+-- Set default value
+ALTER TABLE integers ALTER COLUMN i SET DEFAULT 'default_value';
+
+-- Remove default
+ALTER TABLE integers ALTER COLUMN i DROP DEFAULT;
+
+-- Set NOT NULL constraint
+ALTER TABLE integers ALTER COLUMN i SET NOT NULL;
+
+-- Add primary key
+ALTER TABLE integers ADD PRIMARY KEY (i);
+
+-- Verify constraints
+DESCRIBE integers;
+#+end_src
+
+** 2.5 Table Renaming
+:PROPERTIES:
+:CUSTOM_ID: 25-table-renaming
+:END:
+#+NAME: table-rename
+#+begin_src duckdb :session table-basics
+
+-- Rename table
+ALTER TABLE integers RENAME TO integers_old;
+
+-- Rename column
+ALTER TABLE integers_old RENAME i TO ii;
+
+-- Verify changes
+DESCRIBE integers_old;
+SELECT * FROM integers_old;
+
+.tables
+#+end_src
+
+** 2.6 Generated Columns
+:PROPERTIES:
+:CUSTOM_ID: 26-generated-columns
+:END:
+#+NAME: table-generated-columns
+#+begin_src duckdb :session table-basics
+.tables
+-- Create table with generated column
+CREATE TABLE generated_cols (
+    x FLOAT,
+    two_x AS (2 * x)
+);
+
+-- Create table with explicit virtual column
+CREATE TABLE computed (
+    x FLOAT,
+    two_x FLOAT GENERATED ALWAYS AS (2 * x) VIRTUAL
+);
+
+-- Insert and verify
+INSERT INTO generated_cols (x) VALUES (5.0), (10.0), (15.0);
+SELECT * FROM generated_cols;
+
+INSERT INTO computed (x) VALUES (3.0), (6.0), (9.0);
+SELECT * FROM computed;
+#+end_src
+
+** 2.7 Tables with Constraints
+:PROPERTIES:
+:CUSTOM_ID: 27-tables-with-constraints
+:END:
+#+NAME: table-with-constraints
+#+begin_src duckdb :session table-basics :format markdown
+-- Create table with various constraints
+CREATE TABLE constrained_table (
+    i INTEGER NOT NULL,
+    decimalnr DOUBLE CHECK (decimalnr < 10),
+    date DATE UNIQUE,
+    time TIMESTAMP
+);
+
+-- Create table with CHECK constraint
+CREATE TABLE check_table (
+    id INTEGER PRIMARY KEY,
+    x INTEGER,
+    y INTEGER CHECK (x < y)
+);
+
+-- Verify structures
+DESCRIBE constrained_table;
+DESCRIBE check_table;
+#+end_src
+
+** 2.8 Cleanup Table Basics
+:PROPERTIES:
+:CUSTOM_ID: 28-cleanup-table-basics
+:END:
+#+NAME: table-basics-cleanup
+#+begin_src duckdb :session table-basics
+DROP TABLE IF EXISTS integers_old;
+DROP TABLE IF EXISTS generated_cols;
+DROP TABLE IF EXISTS computed;
+DROP TABLE IF EXISTS constrained_table;
+DROP TABLE IF EXISTS check_table;
+#+end_src
+
+#+begin_src elisp
+(org-babel-duckdb-delete-session "table-basics")
+#+end_src
+
+* 3. Relationships and Foreign Keys
+:PROPERTIES:
+:CUSTOM_ID: 3-relationships-and-foreign-keys
+:END:
+** 3.1 Simple Foreign Keys
+:PROPERTIES:
+:CUSTOM_ID: 31-simple-foreign-keys
+:END:
+#+NAME: fk-simple
+#+begin_src duckdb :session relationships
+-- Create parent table
+CREATE TABLE person (
+    id INTEGER PRIMARY KEY,
+    name VARCHAR
+);
+
+-- Create child table with foreign key
+CREATE TABLE t1 (
+    id INTEGER PRIMARY KEY,
+    j VARCHAR
+);
+
+CREATE TABLE t2 (
+    id INTEGER PRIMARY KEY,
+    t1_id INTEGER,
+    FOREIGN KEY (t1_id) REFERENCES t1 (id)
+);
+
+-- Verify structures
+DESCRIBE TABLE t1;
+DESCRIBE TABLE t2;
+#+end_src
+
+** 3.2 Composite Foreign Keys
+:PROPERTIES:
+:CUSTOM_ID: 32-composite-foreign-keys
+:END:
+#+NAME: fk-composite
+#+begin_src duckdb :session relationships
+-- Create parent with composite key
+CREATE TABLE t3 (
+    id INTEGER,
+    j VARCHAR,
+    PRIMARY KEY (id, j)
+);
+
+-- Create child with composite foreign key
+CREATE TABLE t4 (
+    id INTEGER PRIMARY KEY,
+    t3_id INTEGER,
+    t3_j VARCHAR,
+    FOREIGN KEY (t3_id, t3_j) REFERENCES t3(id, j)
+);
+
+-- Verify structures
+DESCRIBE TABLE t3;
+DESCRIBE TABLE t4;
+#+end_src
+
+** 3.3 Testing Foreign Key Constraints
+:PROPERTIES:
+:CUSTOM_ID: 33-testing-foreign-key-constraints
+:END:
+#+NAME: fk-test-constraints
+#+begin_src duckdb :session relationships
+-- Insert valid parent data
+INSERT INTO t1 VALUES (1, 'parent1'), (2, 'parent2');
+
+-- Insert valid child data
+INSERT INTO t2 VALUES (1, 1), (2, 2);
+
+-- Verify relationship
+SELECT t2.id, t2.t1_id, t1.j
+FROM t2
+JOIN t1 ON t2.t1_id = t1.id;
+
+-- Attempt invalid insert (should fail)
+INSERT INTO t2 VALUES (3, 999);
+#+end_src
+
+** 3.4 Cleanup Relationships
+:PROPERTIES:
+:CUSTOM_ID: 34-cleanup-relationships
+:END:
+#+NAME: relationships-cleanup
+#+begin_src duckdb :session relationships
+DROP TABLE IF EXISTS t4;
+DROP TABLE IF EXISTS t3;
+DROP TABLE IF EXISTS t2;
+DROP TABLE IF EXISTS t1;
+DROP TABLE IF EXISTS person;
+#+end_src
+
+#+begin_src elisp
+(org-babel-duckdb-delete-session "relationships")
+#+end_src
+
+* 4. Custom Data Types
+:PROPERTIES:
+:CUSTOM_ID: 4-custom-data-types
+:END:
+** 4.1 Creating Custom Types
+:PROPERTIES:
+:CUSTOM_ID: 41-creating-custom-types
+:END:
+#+NAME: custom-types-create
+#+begin_src duckdb :session custom-types
+-- Create ENUM type
+CREATE TYPE mood AS ENUM('happy', 'sad', 'curious');
+
+-- Create STRUCT type
+CREATE TYPE many_things AS STRUCT(k INTEGER, l VARCHAR);
+
+-- Create UNION type
+CREATE TYPE one_thing AS UNION(number INTEGER, string VARCHAR);
+
+-- Create type alias
+CREATE TYPE x_index AS INTEGER;
+
+-- Verify types exist
+SELECT type_name, type_category
+FROM duckdb_types()
+WHERE type_name IN ('mood', 'many_things', 'one_thing', 'x_index');
+#+end_src
+
+** 4.2 Using Custom Types
+:PROPERTIES:
+:CUSTOM_ID: 42-using-custom-types
+:END:
+#+NAME: custom-types-usage
+#+begin_src duckdb :session custom-types
+-- Create table using custom types
+CREATE TABLE typed_data (
+    id x_index,
+    feeling mood,
+    data many_things,
+    value one_thing
+);
+
+-- Insert data
+INSERT INTO typed_data VALUES
+    (1, 'happy', {'k': 42, 'l': 'test'}, union_value(number := 123)),
+    (2, 'curious', {'k': 84, 'l': 'example'}, union_value(string := 'hello'));
+
+-- Query typed data
+SELECT * FROM typed_data;
+#+end_src
+
+** 4.3 Cleanup Custom Types
+:PROPERTIES:
+:CUSTOM_ID: 43-cleanup-custom-types
+:END:
+#+NAME: custom-types-cleanup
+#+begin_src duckdb :session custom-types
+DROP TABLE IF EXISTS typed_data;
+DROP TYPE IF EXISTS mood;
+DROP TYPE IF EXISTS many_things;
+DROP TYPE IF EXISTS one_thing;
+DROP TYPE IF EXISTS x_index;
+#+end_src
+
+* 5. Views and Comments
+:PROPERTIES:
+:CUSTOM_ID: 5-views-and-comments
+:END:
+** 5.1 Creating and Managing Views
+:PROPERTIES:
+:CUSTOM_ID: 51-creating-and-managing-views
+:END:
+#+NAME: views-basic
+#+begin_src duckdb :session views
+-- Create base table
+CREATE TABLE base_data (id INTEGER, value VARCHAR);
+INSERT INTO base_data VALUES (1, 'first'), (2, 'second'), (3, 'third');
+
+-- Create view
+CREATE VIEW v1 AS SELECT * FROM base_data;
+
+-- Replace view
+CREATE OR REPLACE VIEW v1 AS SELECT 42 AS number;
+
+-- Query view definition
+SELECT sql FROM duckdb_views() WHERE view_name = 'v1';
+
+-- Query view
+SELECT * FROM v1;
+#+end_src
+
+** 5.2 Adding Comments
+:PROPERTIES:
+:CUSTOM_ID: 52-adding-comments
+:END:
+#+NAME: views-comments
+#+begin_src duckdb :session views
+-- Create table for comments
+CREATE TABLE commented_table (id INTEGER, name VARCHAR);
+
+-- Add comments
+COMMENT ON TABLE commented_table IS 'very nice table';
+COMMENT ON VIEW v1 IS 'very nice view';
+
+-- Query comments
+SELECT table_name, comment
+FROM duckdb_tables()
+WHERE comment IS NOT NULL;
+#+end_src
+
+** 5.3 Cleanup Views
+:PROPERTIES:
+:CUSTOM_ID: 53-cleanup-views
+:END:
+#+NAME: views-cleanup
+#+begin_src duckdb :session views
+DROP VIEW IF EXISTS v1;
+DROP TABLE IF EXISTS base_data;
+DROP TABLE IF EXISTS commented_table;
+#+end_src
+
+* 6. Sequences and Auto-Increment
+:PROPERTIES:
+:CUSTOM_ID: 6-sequences-and-auto-increment
+:END:
+** 6.1 Creating Sequences
+:PROPERTIES:
+:CUSTOM_ID: 61-creating-sequences
+:END:
+#+NAME: sequences-create
+#+begin_src duckdb :session sequences
+-- Create sequence with custom start and increment
+CREATE SEQUENCE serial START WITH 1 INCREMENT BY 2;
+
+-- Create simple sequence
+CREATE SEQUENCE id_sequence START 1;
+
+-- Test sequence functions
+SELECT nextval('serial') AS first_value;
+SELECT nextval('serial') AS second_value;
+SELECT currval('serial') AS current_value;
+#+end_src
+
+** 6.2 Using Sequences in Tables
+:PROPERTIES:
+:CUSTOM_ID: 62-using-sequences-in-tables
+:END:
+#+NAME: sequences-in-tables
+#+begin_src duckdb :session sequences
+-- Create table with sequence-based default
+CREATE TABLE with_serial (
+    id INTEGER DEFAULT nextval('id_sequence'),
+    s VARCHAR
+);
+
+-- Insert without specifying ID
+INSERT INTO with_serial (s) VALUES ('hello'), ('world'), ('test');
+
+-- Verify auto-increment
+SELECT * FROM with_serial;
+#+end_src
+
+** 6.3 Cleanup Sequences
+:PROPERTIES:
+:CUSTOM_ID: 63-cleanup-sequences
+:END:
+#+NAME: sequences-cleanup
+#+begin_src duckdb :session sequences
+DROP TABLE IF EXISTS with_serial;
+DROP SEQUENCE IF EXISTS serial;
+DROP SEQUENCE IF EXISTS id_sequence;
+#+end_src
+
+* 7. Data Insertion Techniques
+:PROPERTIES:
+:CUSTOM_ID: 7-data-insertion-techniques
+:END:
+** 7.1 Basic Insertion
+:PROPERTIES:
+:CUSTOM_ID: 71-basic-insertion
+:END:
+#+NAME: insert-basic
+#+begin_src duckdb :session insertion
+-- Create tables for insertion examples
+CREATE TABLE city (
+    name VARCHAR,
+    revenue BIGINT,
+    country_code VARCHAR
+);
+
+CREATE TABLE country (
+    code VARCHAR,
+    name VARCHAR
+);
+
+-- Insert multiple rows
+INSERT INTO city VALUES
+    ('Paris', 700, 'FR'),
+    ('Lyon', 200, 'FR'),
+    ('Brussels', 400, 'BE');
+
+INSERT INTO country VALUES
+    ('FR', 'France'),
+    ('BE', 'Belgium');
+
+-- Verify insertions
+FROM city;
+FROM country;
+#+end_src
+
+** 7.2 Positional vs Named Insertion
+:PROPERTIES:
+:CUSTOM_ID: 72-positional-vs-named-insertion
+:END:
+#+NAME: insert-positional-named
+#+begin_src duckdb :session insertion
+-- Create table for testing
+CREATE TABLE tbl (i INTEGER, j INTEGER);
+
+-- Insert by position (default)
+INSERT INTO tbl VALUES (5, 42);
+INSERT INTO tbl BY POSITION VALUES (6, 43);
+
+-- Verify
+FROM tbl;
+#+end_src
+
+** 7.3 Named Column Insertion
+:PROPERTIES:
+:CUSTOM_ID: 73-named-column-insertion
+:END:
+#+NAME: insert-named-columns
+#+begin_src duckdb :session insertion
+-- Create table with specific column order
+CREATE TABLE named_insertion (a INTEGER, b INTEGER);
+
+-- Insert with reversed column order
+INSERT INTO named_insertion (b, a) VALUES (5, 42);
+
+-- Insert by name from SELECT
+INSERT INTO named_insertion BY NAME (SELECT 42 AS b, 32 AS a);
+
+-- Insert partial columns by name
+INSERT INTO named_insertion BY NAME (SELECT 22 AS b);
+
+-- Verify all insertions
+SELECT * FROM named_insertion;
+#+end_src
+
+** 7.4 Insertion with RETURNING
+:PROPERTIES:
+:CUSTOM_ID: 74-insertion-with-returning
+:END:
+#+NAME: insert-returning
+#+begin_src duckdb :session insertion
+-- Create table for RETURNING examples
+CREATE TABLE returning_tbl (i INTEGER, j INTEGER);
+
+-- Insert and return all columns
+INSERT INTO returning_tbl SELECT 42 AS i, 84 AS j RETURNING *;
+
+-- Insert and return computed values
+INSERT INTO returning_tbl SELECT 2 AS i, 3 AS j
+RETURNING *, i * j AS i_times_j;
+#+end_src
+
+** 7.5 Cleanup Insertion
+:PROPERTIES:
+:CUSTOM_ID: 75-cleanup-insertion
+:END:
+#+NAME: insertion-cleanup
+#+begin_src duckdb :session insertion
+DROP TABLE IF EXISTS city;
+DROP TABLE IF EXISTS country;
+DROP TABLE IF EXISTS tbl;
+DROP TABLE IF EXISTS named_insertion;
+DROP TABLE IF EXISTS returning_tbl;
+#+end_src
+
+* 8. Conflict Resolution (UPSERT)
+:PROPERTIES:
+:CUSTOM_ID: 8-conflict-resolution-upsert
+:END:
+** 8.1 Basic Conflict Resolution
+:PROPERTIES:
+:CUSTOM_ID: 81-basic-conflict-resolution
+:END:
+#+NAME: upsert-basic
+#+begin_src duckdb :session upsert
+-- Create table with primary key
+CREATE TABLE pk_table (
+    i INTEGER PRIMARY KEY,
+    j INTEGER
+);
+
+-- Initial insert
+INSERT INTO pk_table VALUES (1, 42);
+FROM pk_table;
+
+-- Attempt duplicate - do nothing
+INSERT INTO pk_table VALUES (1, 84) ON CONFLICT DO NOTHING;
+FROM pk_table;
+
+-- Attempt duplicate - update
+INSERT INTO pk_table VALUES (1, 168)
+ON CONFLICT DO UPDATE SET j = EXCLUDED.j;
+FROM pk_table;
+#+end_src
+
+** 8.2 Complex Conflict Resolution
+:PROPERTIES:
+:CUSTOM_ID: 82-complex-conflict-resolution
+:END:
+#+NAME: upsert-complex
+#+begin_src duckdb :session upsert
+-- Create table with multiple constraints
+CREATE TABLE conflict_table (
+    i INTEGER PRIMARY KEY,
+    j INTEGER UNIQUE,
+    k INTEGER
+);
+
+-- Initial insert
+INSERT INTO conflict_table VALUES (1, 20, 300);
+
+-- Conflict on primary key
+INSERT INTO conflict_table VALUES (1, 40, 700)
+ON CONFLICT (i) DO UPDATE SET k = 2 * EXCLUDED.k;
+
+-- Conflict on unique column
+INSERT INTO conflict_table VALUES (2, 20, 900)
+ON CONFLICT (j) DO UPDATE SET k = 5 * EXCLUDED.k;
+
+-- Verify final state
+SELECT * FROM conflict_table;
+#+end_src
+
+** 8.3 Cleanup Upsert
+:PROPERTIES:
+:CUSTOM_ID: 83-cleanup-upsert
+:END:
+#+NAME: upsert-cleanup
+#+begin_src duckdb :session upsert
+DROP TABLE IF EXISTS pk_table;
+DROP TABLE IF EXISTS conflict_table;
+#+end_src
+
+* 9. Data Modification (UPDATE and DELETE)
+:PROPERTIES:
+:CUSTOM_ID: 9-data-modification-update-and-delete
+:END:
+** 9.1 Basic Updates
+:PROPERTIES:
+:CUSTOM_ID: 91-basic-updates
+:END:
+#+NAME: update-basic
+#+begin_src duckdb :session modification
+-- Create tables for update examples
+CREATE TABLE city (
+    name VARCHAR,
+    revenue BIGINT,
+    country_code VARCHAR
+);
+
+CREATE TABLE country (
+    code VARCHAR,
+    name VARCHAR
+);
+
+-- Insert data
+INSERT INTO city VALUES
+    ('Paris', 700, 'FR'),
+    ('Lyon', 200, 'FR'),
+    ('Brussels', 400, 'BE');
+
+INSERT INTO country VALUES
+    ('FR', 'France'),
+    ('BE', 'Belgium');
+
+-- Update with JOIN
+UPDATE city
+SET revenue = revenue + 100
+FROM country
+WHERE city.country_code = country.code
+  AND country.name = 'France';
+
+-- Verify update
+SELECT * FROM city;
+#+end_src
+
+** 9.2 Complex Updates with Subqueries
+:PROPERTIES:
+:CUSTOM_ID: 92-complex-updates-with-subqueries
+:END:
+#+NAME: update-complex
+#+begin_src duckdb :session modification
+-- Create tables for complex update
+CREATE TABLE original AS
+    SELECT 1 AS key, 'original value' AS value
+    UNION ALL
+    SELECT 2 AS key, 'original value 2' AS value;
+
+CREATE TABLE new AS
+    SELECT 1 AS key, 'new value' AS value
+    UNION ALL
+    SELECT 2 AS key, 'new value 2' AS value;
+
+-- Update from another table
+UPDATE original
+SET value = new.value
+FROM new
+WHERE original.key = new.key;
+
+-- Verify update
+SELECT * FROM original;
+#+end_src
+
+** 9.3 Delete Operations
+:PROPERTIES:
+:CUSTOM_ID: 93-delete-operations
+:END:
+#+NAME: delete-basic
+#+begin_src duckdb :session modification
+-- Create table for deletion
+CREATE TABLE for_deletion AS SELECT * FROM range(1, 10) t(id);
+
+-- Delete specific row
+DELETE FROM for_deletion WHERE id = 2;
+SELECT * FROM for_deletion;
+
+-- Delete range
+DELETE FROM for_deletion WHERE id > 5;
+SELECT * FROM for_deletion;
+
+-- Truncate (delete all)
+TRUNCATE for_deletion;
+SELECT COUNT(*) AS remaining FROM for_deletion;
+#+end_src
+
+** 9.4 Cleanup Modification
+:PROPERTIES:
+:CUSTOM_ID: 94-cleanup-modification
+:END:
+#+NAME: modification-cleanup
+#+begin_src duckdb :session modification
+DROP TABLE IF EXISTS city;
+DROP TABLE IF EXISTS country;
+DROP TABLE IF EXISTS original;
+DROP TABLE IF EXISTS new;
+DROP TABLE IF EXISTS for_deletion;
+#+end_src
+
+* 10. Pivot and Unpivot Operations
+:PROPERTIES:
+:CUSTOM_ID: 10-pivot-and-unpivot-operations
+:END:
+** 10.1 Creating Test Data for Pivot
+:PROPERTIES:
+:CUSTOM_ID: 101-creating-test-data-for-pivot
+:END:
+#+NAME: pivot-setup
+#+begin_src duckdb :session pivot-unpivot
+-- Create cities table for pivot examples
+CREATE TABLE cities (
+    country VARCHAR,
+    name VARCHAR,
+    year INTEGER,
+    population INTEGER
+);
+
+-- Insert sample data
+INSERT INTO cities VALUES
+    ('NL', 'Amsterdam', 2000, 1005),
+    ('NL', 'Amsterdam', 2010, 1065),
+    ('NL', 'Amsterdam', 2020, 1158),
+    ('US', 'Seattle', 2000, 564),
+    ('US', 'Seattle', 2010, 608),
+    ('US', 'Seattle', 2020, 738),
+    ('US', 'New York City', 2000, 8015),
+    ('US', 'New York City', 2010, 8175),
+    ('US', 'New York City', 2020, 8772);
+
+-- View source data
+SELECT * FROM cities ORDER BY country, name, year;
+#+end_src
+
+** 10.2 Basic Pivot Operations
+:PROPERTIES:
+:CUSTOM_ID: 102-basic-pivot-operations
+:END:
+#+NAME: pivot-basic
+#+begin_src duckdb :session pivot-unpivot :format markdown
+-- Simple pivot - years as columns
+PIVOT cities
+ON year
+USING sum(population);
+#+end_src
+
+** 10.3 Pivot with Grouping
+:PROPERTIES:
+:CUSTOM_ID: 103-pivot-with-grouping
+:END:
+#+NAME: pivot-grouped
+#+begin_src duckdb :session pivot-unpivot :format markdown
+-- Pivot with grouping by country
+PIVOT cities
+ON year
+USING sum(population)
+GROUP BY country;
+#+end_src
+
+** 10.4 Pivot with Column Selection
+:PROPERTIES:
+:CUSTOM_ID: 104-pivot-with-column-selection
+:END:
+#+NAME: pivot-selective
+#+begin_src duckdb :session pivot-unpivot :format markdown
+-- Pivot specific years only
+PIVOT cities
+ON year IN (2000, 2010)
+USING sum(population)
+GROUP BY country;
+#+end_src
+
+** 10.5 Pivot with Multiple Aggregations
+:PROPERTIES:
+:CUSTOM_ID: 105-pivot-with-multiple-aggregations
+:END:
+#+NAME: pivot-multi-agg
+#+begin_src duckdb :session pivot-unpivot :format markdown
+-- Multiple aggregation functions
+PIVOT cities
+ON year
+USING sum(population) AS total, max(population) AS max
+GROUP BY country;
+#+end_src
+
+** 10.6 Pivot in Subqueries and CTEs
+:PROPERTIES:
+:CUSTOM_ID: 106-pivot-in-subqueries-and-ctes
+:END:
+#+NAME: pivot-subquery
+#+begin_src duckdb :session pivot-unpivot :format markdown
+-- Using pivot in CTE
+WITH pivot_alias AS (
+    PIVOT cities
+    ON year
+    USING sum(population)
+    GROUP BY country
+)
+SELECT * FROM pivot_alias;
+
+-- Using pivot in subquery
+SELECT *
+FROM (
+    PIVOT cities
+    ON year
+    USING sum(population)
+    GROUP BY country
+) pivot_alias;
+#+end_src
+
+** 10.7 SQL Standard Pivot Syntax
+:PROPERTIES:
+:CUSTOM_ID: 107-sql-standard-pivot-syntax
+:END:
+#+NAME: pivot-sql-standard
+#+begin_src duckdb :session pivot-unpivot :format markdown
+-- SQL standard syntax
+SELECT *
+FROM cities
+PIVOT (
+    sum(population)
+    FOR year IN (2000, 2010, 2020)
+    GROUP BY country
+);
+#+end_src
+
+** 10.8 Creating Test Data for Unpivot
+:PROPERTIES:
+:CUSTOM_ID: 108-creating-test-data-for-unpivot
+:END:
+#+NAME: unpivot-setup
+#+begin_src duckdb :session pivot-unpivot
+-- Create monthly sales table
+CREATE TABLE monthly_sales (
+    empid INTEGER,
+    dept TEXT,
+    Jan INTEGER,
+    Feb INTEGER,
+    Mar INTEGER,
+    Apr INTEGER,
+    May INTEGER,
+    Jun INTEGER
+);
+
+-- Insert sample data
+INSERT INTO monthly_sales VALUES
+    (1, 'electronics', 1, 2, 3, 4, 5, 6),
+    (2, 'clothes', 10, 20, 30, 40, 50, 60),
+    (3, 'cars', 100, 200, 300, 400, 500, 600);
+
+-- View source data
+SELECT * FROM monthly_sales;
+#+end_src
+
+** 10.9 Basic Unpivot Operations
+:PROPERTIES:
+:CUSTOM_ID: 109-basic-unpivot-operations
+:END:
+#+NAME: unpivot-basic
+#+begin_src duckdb :session pivot-unpivot :format markdown
+-- Explicit column unpivot
+UNPIVOT monthly_sales
+ON jan, feb, mar, apr, may, jun
+INTO
+    NAME month
+    VALUE sales;
+#+end_src
+
+** 10.10 Unpivot with Column Expressions
+:PROPERTIES:
+:CUSTOM_ID: 1010-unpivot-with-column-expressions
+:END:
+#+NAME: unpivot-columns-expr
+#+begin_src duckdb :session pivot-unpivot :format markdown
+-- Using COLUMNS expression
+UNPIVOT monthly_sales
+ON COLUMNS(* EXCLUDE (empid, dept))
+INTO
+    NAME month
+    VALUE sales;
+#+end_src
+
+** 10.11 Unpivot with Multiple Value Columns
+:PROPERTIES:
+:CUSTOM_ID: 1011-unpivot-with-multiple-value-columns
+:END:
+#+NAME: unpivot-multi-value
+#+begin_src duckdb :session pivot-unpivot :format markdown
+-- Unpivot into multiple value columns
+UNPIVOT monthly_sales
+ON (jan, feb, mar) AS q1, (apr, may, jun) AS q2
+INTO
+    NAME quarter
+    VALUE month_1_sales, month_2_sales, month_3_sales;
+#+end_src
+
+** 10.12 SQL Standard Unpivot Syntax
+:PROPERTIES:
+:CUSTOM_ID: 1012-sql-standard-unpivot-syntax
+:END:
+#+NAME: unpivot-sql-standard
+#+begin_src duckdb :session pivot-unpivot :format markdown
+-- SQL standard unpivot
+FROM monthly_sales
+UNPIVOT (
+    sales
+    FOR month IN (jan, feb, mar, apr, may, jun)
+);
+#+end_src
+
+** 10.13 Cleanup Pivot/Unpivot
+:PROPERTIES:
+:CUSTOM_ID: 1013-cleanup-pivotunpivot
+:END:
+#+NAME: pivot-unpivot-cleanup
+#+begin_src duckdb :session pivot-unpivot
+DROP TABLE IF EXISTS cities;
+DROP TABLE IF EXISTS monthly_sales;
+#+end_src
+
+* 11. Macros and User-Defined Functions
+:PROPERTIES:
+:CUSTOM_ID: 11-macros-and-user-defined-functions
+:END:
+** 11.1 Simple Macros
+:PROPERTIES:
+:CUSTOM_ID: 111-simple-macros
+:END:
+#+NAME: macros-simple
+#+begin_src duckdb :session macros
+-- Create simple scalar macros
+CREATE MACRO add(a, b) AS a + b;
+CREATE MACRO ifelse(a, b, c) AS CASE WHEN a THEN b ELSE c END;
+
+-- Create macro returning subquery
+CREATE MACRO one() AS (SELECT 1);
+
+-- Test macros
+SELECT
+    add(1, 2) AS result,
+    ifelse(TRUE, 'yes', 'no') AS condition,
+    one() AS constant;
+#+end_src
+
+** 11.2 Macros with Default Parameters
+:PROPERTIES:
+:CUSTOM_ID: 112-macros-with-default-parameters
+:END:
+#+NAME: macros-defaults
+#+begin_src duckdb :session macros
+-- Macro with single default parameter
+CREATE MACRO add_default(a, b := 5) AS a + b;
+
+-- Test with and without default
+SELECT
+    add_default(37) AS default_param,
+    add_default(40, 2) AS both_params;
+
+-- Macro with multiple defaults
+CREATE MACRO triple_add(a, b := 5, c := 10) AS a + b + c;
+
+-- Test with named parameters
+SELECT triple_add(40, c := 1, b := 1) AS named_params;
+#+end_src
+
+** 11.3 Table-Returning Macros
+:PROPERTIES:
+:CUSTOM_ID: 113-table-returning-macros
+:END:
+#+NAME: macros-table-returning
+#+begin_src duckdb :session macros
+-- Static table macro
+CREATE MACRO static_table() AS TABLE
+    SELECT 'Hello' AS column1, 'World' AS column2;
+
+-- Dynamic table macro
+CREATE MACRO dynamic_table(col1_value, col2_value) AS TABLE
+    SELECT col1_value AS column1, col2_value AS column2;
+
+-- Test table macros
+SELECT * FROM static_table();
+SELECT * FROM dynamic_table('Custom', 123);
+#+end_src
+
+** 11.4 Cleanup Macros
+:PROPERTIES:
+:CUSTOM_ID: 114-cleanup-macros
+:END:
+#+NAME: macros-cleanup
+#+begin_src duckdb :session macros
+DROP MACRO IF EXISTS add;
+DROP MACRO IF EXISTS ifelse;
+DROP MACRO IF EXISTS one;
+DROP MACRO IF EXISTS add_default;
+DROP MACRO IF EXISTS triple_add;
+DROP MACRO IF EXISTS static_table;
+DROP MACRO IF EXISTS dynamic_table;
+#+end_src
+
+* 12. Variables and Settings
+:PROPERTIES:
+:CUSTOM_ID: 12-variables-and-settings
+:END:
+** 12.1 Setting Variables
+:PROPERTIES:
+:CUSTOM_ID: 121-setting-variables
+:END:
+#+NAME: variables-basic
+#+begin_src duckdb :session variables
+-- Set various types of variables
+SET VARIABLE my_var = 30;
+SET VARIABLE my_date = DATE '2018-07-13';
+SET VARIABLE my_string = 'Hello world';
+SET VARIABLE my_map = MAP {'k1': 10, 'k2': 20};
+
+-- Use variables in queries
+SELECT
+    20 + getvariable('my_var') AS total,
+    getvariable('my_date') AS the_date,
+    getvariable('my_string') AS message;
+#+end_src
+
+** 12.2 Advanced Variable Usage
+:PROPERTIES:
+:CUSTOM_ID: 122-advanced-variable-usage
+:END:
+#+NAME: variables-advanced
+#+begin_src duckdb :session variables
+-- Create table for testing
+CREATE TABLE var_tbl AS SELECT 12 AS col0, 34 AS col1, 56 AS col2;
+
+-- Use variable in column selection
+SET VARIABLE column_to_exclude = 'col1';
+SELECT COLUMNS(c -> c != getvariable('column_to_exclude'))
+FROM var_tbl;
+
+-- Reset variable
+RESET VARIABLE my_var;
+#+end_src
+
+** 12.3 System Settings
+:PROPERTIES:
+:CUSTOM_ID: 123-system-settings
+:END:
+#+NAME: settings-management
+#+begin_src duckdb :session variables
+-- Set system settings
+SET memory_limit = '10GB';
+SET threads = 1;
+SET threads TO 1;
+
+-- Query current setting
+SELECT current_setting('threads') AS thread_count;
+
+-- Reset to default
+RESET threads;
+SELECT current_setting('threads') AS thread_count_after_reset;
+#+end_src
+
+** 12.4 Cleanup Variables
+:PROPERTIES:
+:CUSTOM_ID: 124-cleanup-variables
+:END:
+#+NAME: variables-cleanup
+#+begin_src duckdb :session variables
+DROP TABLE IF EXISTS var_tbl;
+RESET VARIABLE my_date;
+RESET VARIABLE my_string;
+RESET VARIABLE my_map;
+RESET VARIABLE column_to_exclude;
+#+end_src
+
+* 13. Transaction Management
+:PROPERTIES:
+:CUSTOM_ID: 13-transaction-management
+:END:
+** 13.1 Basic Transactions
+:PROPERTIES:
+:CUSTOM_ID: 131-basic-transactions
+:END:
+#+NAME: transactions-basic
+#+begin_src duckdb :session transactions
+-- Create table for transaction testing
+CREATE TABLE txn_test (id INTEGER, name VARCHAR);
+
+-- Successful transaction
+BEGIN TRANSACTION;
+INSERT INTO txn_test VALUES (1, 'Ada');
+INSERT INTO txn_test VALUES (2, 'Bob');
+COMMIT;
+
+-- Verify commit
+SELECT * FROM txn_test;
+#+end_src
+
+** 13.2 Transaction Rollback
+:PROPERTIES:
+:CUSTOM_ID: 132-transaction-rollback
+:END:
+#+NAME: transactions-rollback
+#+begin_src duckdb :session transactions
+-- Transaction that will be rolled back
+BEGIN TRANSACTION;
+DELETE FROM txn_test WHERE name = 'Ada';
+INSERT INTO txn_test VALUES (3, 'Charlie');
+ROLLBACK;
+
+-- Verify rollback - Ada should still exist
+SELECT * FROM txn_test;
+#+end_src
+
+** 13.3 Checkpoints
+:PROPERTIES:
+:CUSTOM_ID: 133-checkpoints
+:END:
+#+NAME: transactions-checkpoint
+#+begin_src duckdb :session transactions
+-- Regular checkpoint
+CHECKPOINT;
+
+-- Force checkpoint
+FORCE CHECKPOINT;
+
+-- Verify data persisted
+SELECT COUNT(*) AS row_count FROM txn_test;
+#+end_src
+
+** 13.4 Cleanup Transactions
+:PROPERTIES:
+:CUSTOM_ID: 134-cleanup-transactions
+:END:
+#+NAME: transactions-cleanup
+#+begin_src duckdb :session transactions
+DROP TABLE IF EXISTS txn_test;
+#+end_src
+
+* 14. Window Functions and Analytical Queries
+:PROPERTIES:
+:CUSTOM_ID: 14-window-functions-and-analytical-queries
+:END:
+** 14.1 Creating Test Data
+:PROPERTIES:
+:CUSTOM_ID: 141-creating-test-data
+:END:
+#+NAME: window-setup
+#+begin_src duckdb :session window-functions
+-- Create test data for window functions
+CREATE TABLE window_data AS
+SELECT
+    id,
+    category,
+    id * 10 AS value
+FROM range(1, 10) t(id),
+     range(1, 3) c(category);
+
+-- View source data
+SELECT * FROM window_data ORDER BY category, id;
+#+end_src
+
+** 14.2 Basic Window Functions
+:PROPERTIES:
+:CUSTOM_ID: 142-basic-window-functions
+:END:
+#+NAME: window-basic
+#+begin_src duckdb :session window-functions :format markdown
+-- Window functions with partitioning
+SELECT
+    id,
+    category,
+    value,
+    SUM(value) OVER (PARTITION BY category) AS sum_by_category,
+    AVG(value) OVER (PARTITION BY category) AS avg_by_category,
+    ROW_NUMBER() OVER (PARTITION BY category ORDER BY id) AS row_num
+FROM window_data
+ORDER BY category, id;
+#+end_src
+
+** 14.3 Using QUALIFY
+:PROPERTIES:
+:CUSTOM_ID: 143-using-qualify
+:END:
+#+NAME: window-qualify
+#+begin_src duckdb :session window-functions :format markdown
+-- Filter based on window function results
+SELECT
+    id,
+    category,
+    value,
+    ROW_NUMBER() OVER (PARTITION BY category ORDER BY id) AS row_num
+FROM window_data
+QUALIFY row_num <= 2
+ORDER BY category, id;
+#+end_src
+
+** 14.4 Cleanup Window Functions
+:PROPERTIES:
+:CUSTOM_ID: 144-cleanup-window-functions
+:END:
+#+NAME: window-cleanup
+#+begin_src duckdb :session window-functions
+DROP TABLE IF EXISTS window_data;
+#+end_src
+
+* 15. Aggregation and Grouping
+:PROPERTIES:
+:CUSTOM_ID: 15-aggregation-and-grouping
+:END:
+** 15.1 Creating Test Data
+:PROPERTIES:
+:CUSTOM_ID: 151-creating-test-data
+:END:
+#+NAME: aggregation-setup
+#+begin_src duckdb :session aggregation
+-- Create sales data
+CREATE TABLE sales_data AS
+SELECT
+    id,
+    CASE WHEN id % 3 = 0 THEN 'A'
+         WHEN id % 3 = 1 THEN 'B'
+         ELSE 'C' END AS category,
+    id * 1.5 AS amount
+FROM range(1, 20) t(id);
+
+-- View source data
+SELECT * FROM sales_data;
+#+end_src
+
+** 15.2 Basic Aggregation
+:PROPERTIES:
+:CUSTOM_ID: 152-basic-aggregation
+:END:
+#+NAME: aggregation-basic
+#+begin_src duckdb :session aggregation :format markdown
+-- Standard aggregation with grouping
+SELECT
+    category,
+    COUNT(*) AS count,
+    SUM(amount) AS total,
+    AVG(amount) AS average,
+    MIN(amount) AS minimum,
+    MAX(amount) AS maximum
+FROM sales_data
+GROUP BY category
+ORDER BY category;
+#+end_src
+
+** 15.3 Aggregation with HAVING
+:PROPERTIES:
+:CUSTOM_ID: 153-aggregation-with-having
+:END:
+#+NAME: aggregation-having
+#+begin_src duckdb :session aggregation :format markdown
+-- Filter groups with HAVING
+SELECT
+    category,
+    COUNT(*) AS count,
+    SUM(amount) AS total
+FROM sales_data
+GROUP BY category
+HAVING COUNT(*) > 5
+ORDER BY total DESC;
+#+end_src
+
+** 15.4 Cleanup Aggregation
+:PROPERTIES:
+:CUSTOM_ID: 154-cleanup-aggregation
+:END:
+#+NAME: aggregation-cleanup
+#+begin_src duckdb :session aggregation
+DROP TABLE IF EXISTS sales_data;
+#+end_src
+
+* 16. Complex Data Types
+:PROPERTIES:
+:CUSTOM_ID: 16-complex-data-types
+:END:
+** 16.1 JSON Operations
+:PROPERTIES:
+:CUSTOM_ID: 161-json-operations
+:END:
+#+NAME: json-operations
+#+begin_src duckdb :session complex-types
+-- Create JSON data
+SELECT
+    json({'id': 1, 'name': 'test'}) AS json_obj,
+    json_extract('{"id": 1, "name": "test"}', '$.name') AS extracted_name,
+    json_extract('{"id": 1, "name": "test"}', '$.id') AS extracted_id;
+
+-- Create table with JSON
+CREATE TABLE json_data (
+    id INTEGER,
+    data JSON
+);
+
+INSERT INTO json_data VALUES
+    (1, json({'product': 'laptop', 'price': 999})),
+    (2, json({'product': 'phone', 'price': 599}));
+
+-- Extract from JSON column
+SELECT
+    id,
+    json_extract(data, '$.product') AS product,
+    json_extract(data, '$.price') AS price
+FROM json_data;
+#+end_src
+
+** 16.2 List Operations
+:PROPERTIES:
+:CUSTOM_ID: 162-list-operations
+:END:
+#+NAME: list-operations
+#+begin_src duckdb :session complex-types
+-- Create and manipulate lists
+SELECT
+    list_value(1, 2, 3) AS my_list,
+    list_extract(list_value(1, 2, 3), 2) AS second_element,
+    array_length(list_value(1, 2, 3)) AS list_length,
+    list_concat(list_value(1, 2), list_value(3, 4)) AS concatenated;
+
+-- Create table with lists
+CREATE TABLE list_data (
+    id INTEGER,
+    numbers INTEGER[]
+);
+
+INSERT INTO list_data VALUES
+    (1, [1, 2, 3]),
+    (2, [10, 20, 30, 40]);
+
+-- Query list data
+SELECT
+    id,
+    numbers,
+    array_length(numbers) AS length,
+    list_sum(numbers) AS total
+FROM list_data;
+#+end_src
+
+** 16.3 Map Operations
+:PROPERTIES:
+:CUSTOM_ID: 163-map-operations
+:END:
+#+NAME: map-operations
+#+begin_src duckdb :session complex-types
+-- Create and use maps
+SELECT
+    map(['a', 'b', 'c'], [1, 2, 3]) AS letter_map,
+    map_extract(map(['a', 'b', 'c'], [1, 2, 3]), 'b') AS value_for_b,
+    map_keys(map(['a', 'b', 'c'], [1, 2, 3])) AS keys,
+    map_values(map(['a', 'b', 'c'], [1, 2, 3])) AS values;
+#+end_src
+
+** 16.4 Struct Operations
+:PROPERTIES:
+:CUSTOM_ID: 164-struct-operations
+:END:
+#+NAME: struct-operations
+#+begin_src duckdb :session complex-types
+-- Create and use structs
+SELECT
+    {'x': 1, 'y': 2} AS point,
+    {'x': 1, 'y': 2}['x'] AS x_coord,
+    struct_extract({'x': 1, 'y': 2}, 'y') AS y_coord;
+
+-- Create table with structs
+CREATE TABLE struct_data (
+    id INTEGER,
+    point STRUCT(x INTEGER, y INTEGER)
+);
+
+INSERT INTO struct_data VALUES
+    (1, {'x': 10, 'y': 20}),
+    (2, {'x': 30, 'y': 40});
+
+-- Query struct data
+SELECT
+    id,
+    point,
+    point['x'] AS x,
+    point['y'] AS y
+FROM struct_data;
+#+end_src
+
+** 16.5 Cleanup Complex Types
+:PROPERTIES:
+:CUSTOM_ID: 165-cleanup-complex-types
+:END:
+#+NAME: complex-types-cleanup
+#+begin_src duckdb :session complex-types
+DROP TABLE IF EXISTS json_data;
+DROP TABLE IF EXISTS list_data;
+DROP TABLE IF EXISTS struct_data;
+#+end_src
+
+* 17. Data Import/Export (File Operations)
+:PROPERTIES:
+:CUSTOM_ID: 17-data-importexport-file-operations
+:END:
+** 17.1 CSV Operations
+:PROPERTIES:
+:CUSTOM_ID: 171-csv-operations
+:END:
+#+NAME: csv-operations
+#+begin_src duckdb :session file-ops
+-- Create test CSV file
+.shell echo "id,name,value\n1,Alice,100\n2,Bob,200\n3,Charlie,300" > /tmp/test_duckdb.csv
+
+-- Read CSV
+SELECT * FROM read_csv('/tmp/test_duckdb.csv');
+
+-- Create table from CSV
+CREATE TABLE csv_import AS
+SELECT * FROM read_csv('/tmp/test_duckdb.csv');
+
+-- Verify import
+SELECT * FROM csv_import;
+#+end_src
+
+** 17.2 Export to CSV
+:PROPERTIES:
+:CUSTOM_ID: 172-export-to-csv
+:END:
+#+NAME: csv-export
+#+begin_src duckdb :session file-ops
+-- Export table to CSV
+COPY csv_import TO '/tmp/export_test.csv' (FORMAT CSV, HEADER true);
+
+-- Verify export
+.shell cat /tmp/export_test.csv
+
+-- Cleanup files
+.shell rm /tmp/test_duckdb.csv /tmp/export_test.csv
+#+end_src
+
+** 17.3 Parquet Operations
+:PROPERTIES:
+:CUSTOM_ID: 173-parquet-operations
+:END:
+#+NAME: parquet-operations
+#+begin_src duckdb :session file-ops :async yes :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'
+-- Read Parquet from URL (async due to network)
+SELECT * FROM read_parquet('parquet_url') LIMIT 5;
+#+end_src
+
+** 17.4 Cleanup File Operations
+:PROPERTIES:
+:CUSTOM_ID: 174-cleanup-file-operations
+:END:
+#+NAME: file-ops-cleanup
+#+begin_src duckdb :session file-ops
+DROP TABLE IF EXISTS csv_import;
+#+end_src
+
+* 18. System Introspection
+:PROPERTIES:
+:CUSTOM_ID: 18-system-introspection
+:END:
+** 18.1 Database Metadata
+:PROPERTIES:
+:CUSTOM_ID: 181-database-metadata
+:END:
+#+NAME: introspection-metadata
+#+begin_src duckdb :session introspection :format markdown
+-- Create sample objects
+CREATE TABLE sample_table (id INTEGER, name VARCHAR);
+CREATE VIEW sample_view AS SELECT * FROM sample_table;
+
+-- Query functions
+SELECT function_name, parameters, return_type
+FROM duckdb_functions()
+WHERE function_name LIKE 'list%'
+LIMIT 10;
+#+end_src
+
+** 18.2 Table Information
+:PROPERTIES:
+:CUSTOM_ID: 182-table-information
+:END:
+#+NAME: introspection-tables
+#+begin_src duckdb :session introspection :format markdown
+-- Get table info using pragma
+CALL pragma_table_info('sample_table');
+
+-- Query table metadata
+SELECT table_name, column_name, data_type
+FROM duckdb_columns()
+WHERE table_name = 'sample_table';
+#+end_src
+
+** 18.3 Cleanup Introspection
+:PROPERTIES:
+:CUSTOM_ID: 183-cleanup-introspection
+:END:
+#+NAME: introspection-cleanup
+#+begin_src duckdb :session introspection
+DROP VIEW IF EXISTS sample_view;
+DROP TABLE IF EXISTS sample_table;
+#+end_src
+
+* 19. Query Analysis and Optimization
+:PROPERTIES:
+:CUSTOM_ID: 19-query-analysis-and-optimization
+:END:
+** 19.1 Query Plans
+:PROPERTIES:
+:CUSTOM_ID: 191-query-plans
+:END:
+#+NAME: query-analysis-plan
+#+begin_src duckdb :session analysis
+-- Create test data
+CREATE TABLE analysis_test AS
+SELECT * FROM range(1, 1000) t(id);
+
+-- Explain query plan
+EXPLAIN SELECT * FROM analysis_test WHERE id > 500;
+#+end_src
+
+** 19.2 Query Analysis
+:PROPERTIES:
+:CUSTOM_ID: 192-query-analysis
+:END:
+#+NAME: query-analysis-analyze
+#+begin_src duckdb :session analysis :timer on
+-- Analyze query execution
+EXPLAIN ANALYZE SELECT COUNT(*) FROM analysis_test WHERE id % 2 = 0;
+#+end_src
+
+** 19.3 Cleanup Analysis
+:PROPERTIES:
+:CUSTOM_ID: 193-cleanup-analysis
+:END:
+#+NAME: analysis-cleanup
+#+begin_src duckdb :session analysis
+DROP TABLE IF EXISTS analysis_test;
+#+end_src
+
+* 20. Data Sampling
+:PROPERTIES:
+:CUSTOM_ID: 20-data-sampling
+:END:
+** 20.1 Creating Sample Data
+:PROPERTIES:
+:CUSTOM_ID: 201-creating-sample-data
+:END:
+#+NAME: sampling-setup
+#+begin_src duckdb :session sampling
+-- Create large dataset for sampling
+CREATE TABLE sample_data AS
+SELECT * FROM range(1, 1000) t(id);
+
+-- View full data count
+SELECT COUNT(*) AS total_rows FROM sample_data;
+#+end_src
+
+** 20.2 Percentage Sampling
+:PROPERTIES:
+:CUSTOM_ID: 202-percentage-sampling
+:END:
+#+NAME: sampling-percentage
+#+begin_src duckdb :session sampling :format markdown
+-- Sample 10% of rows
+SELECT * FROM sample_data USING SAMPLE 10%
+ORDER BY id
+LIMIT 20;
+#+end_src
+
+** 20.3 Row Count Sampling
+:PROPERTIES:
+:CUSTOM_ID: 203-row-count-sampling
+:END:
+#+NAME: sampling-rows
+#+begin_src duckdb :session sampling :format markdown
+-- Sample specific number of rows
+SELECT * FROM sample_data TABLESAMPLE 20 ROWS
+ORDER BY id;
+#+end_src
+
+** 20.4 Cleanup Sampling
+:PROPERTIES:
+:CUSTOM_ID: 204-cleanup-sampling
+:END:
+#+NAME: sampling-cleanup
+#+begin_src duckdb :session sampling
+DROP TABLE IF EXISTS sample_data;
+#+end_src
+
+* 21. ob-duckdb Feature Integration
+:PROPERTIES:
+:CUSTOM_ID: 21-ob-duckdb-feature-integration
+:END:
+** 21.1 Variable Substitution with DuckDB
+:PROPERTIES:
+:CUSTOM_ID: 211-variable-substitution-with-duckdb
+:END:
+#+NAME: obduckdb-variables
+#+begin_src duckdb :session obduckdb :var threshold=500 :var category="'A'"
+-- Create test data
+CREATE TABLE var_test AS
+SELECT
+    id,
+    CASE WHEN id % 2 = 0 THEN 'A' ELSE 'B' END AS cat
+FROM range(1, 1000) t(id);
+
+-- Use ob-duckdb variables
+SELECT * FROM var_test
+WHERE id > threshold AND cat = category
+LIMIT 10;
+#+end_src
+
+** 21.2 Table Lookup Variables
+:PROPERTIES:
+:CUSTOM_ID: 212-table-lookup-variables
+:END:
+#+NAME: config-table
+| key       | value |
+|-----------|-------|
+| min_id    | 100   |
+| max_id    | 200   |
+| category  | 'A'   |
+
+#+NAME: obduckdb-table-vars
+#+begin_src duckdb :session obduckdb :var cfg=config-table
+-- Use table lookup variables
+SELECT * FROM var_test
+WHERE id BETWEEN cfg[min_id] AND cfg[max_id]
+  AND cat = cfg[category]
+LIMIT 10;
+#+end_src
+
+** 21.3 Async with Progress Monitoring
+:PROPERTIES:
+:CUSTOM_ID: 213-async-with-progress-monitoring
+:END:
+#+NAME: obduckdb-async-progress
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-progress-display 'popup)
+#+end_src
+
+#+NAME: obduckdb-async-query
+#+begin_src duckdb :session obduckdb :async yes
+-- Long-running query with progress
+.shell sleep 3
+SELECT
+    cat,
+    COUNT(*) AS count,
+    AVG(id) AS avg_id
+FROM var_test
+GROUP BY cat;
+#+end_src
+
+** 21.4 Multiple Output Formats
+:PROPERTIES:
+:CUSTOM_ID: 214-multiple-output-formats
+:END:
+#+NAME: obduckdb-format-markdown
+#+begin_src duckdb :session obduckdb :format markdown :headers on
+SELECT cat, COUNT(*) AS count
+FROM var_test
+GROUP BY cat;
+#+end_src
+
+#+NAME: obduckdb-format-json
+#+begin_src duckdb :session obduckdb :format json :wrap src json
+SELECT cat, COUNT(*) AS count
+FROM var_test
+GROUP BY cat;
+#+end_src
+
+#+NAME: obduckdb-format-latex
+#+begin_src duckdb :session obduckdb :format latex :wrap src latex
+SELECT cat, COUNT(*) AS count
+FROM var_test
+GROUP BY cat;
+#+end_src
+
+** 21.5 Output to Buffer
+:PROPERTIES:
+:CUSTOM_ID: 215-output-to-buffer
+:END:
+#+NAME: obduckdb-output-buffer
+#+begin_src duckdb :session obduckdb :output buffer :max-rows 20
+-- Large result to separate buffer
+SELECT * FROM var_test;
+#+end_src
+
+** 21.6 Prologue and Epilogue
+:PROPERTIES:
+:CUSTOM_ID: 216-prologue-and-epilogue
+:END:
+#+NAME: obduckdb-prologue-epilogue
+#+begin_src duckdb :session obduckdb :prologue "CREATE TEMPORARY TABLE temp_calc AS SELECT * FROM var_test WHERE id < 100;" :epilogue "DROP TABLE temp_calc;"
+-- Query uses table created in prologue
+SELECT cat, COUNT(*) AS count
+FROM temp_calc
+GROUP BY cat;
+-- Table will be dropped by epilogue
+#+end_src
+
+** 21.7 Kill on Completion
+:PROPERTIES:
+:CUSTOM_ID: 217-kill-on-completion
+:END:
+#+NAME: obduckdb-kill-session-first
+#+begin_src duckdb :session transient-demo :async yes
+-- First query in session
+SELECT 'First query' AS status;
+#+end_src
+
+#+NAME: obduckdb-kill-session-last
+#+begin_src duckdb :session transient-demo :async yes :kill-on-completion yes
+-- Last query - session will be deleted
+SELECT 'Session will be deleted after this' AS status;
+#+end_src
+
+** 21.8 Cleanup ob-duckdb Features
+:PROPERTIES:
+:CUSTOM_ID: 218-cleanup-ob-duckdb-features
+:END:
+#+NAME: obduckdb-cleanup
+#+begin_src duckdb :session obduckdb
+DROP TABLE IF EXISTS var_test;
+#+end_src
+
+* 22. Performance Testing
+:PROPERTIES:
+:CUSTOM_ID: 22-performance-testing
+:END:
+** 22.1 Large Dataset Operations
+:PROPERTIES:
+:CUSTOM_ID: 221-large-dataset-operations
+:END:
+#+NAME: performance-large-dataset
+#+begin_src duckdb :session performance :timer on
+-- Create large dataset
+CREATE TABLE perf_test AS
+SELECT
+    id,
+    id % 100 AS bucket,
+    random() * 1000 AS value
+FROM range(1, 100000) t(id);
+
+-- Complex aggregation
+SELECT
+    bucket,
+    COUNT(*) AS count,
+    SUM(value) AS sum,
+    AVG(value) AS avg,
+    MIN(value) AS min,
+    MAX(value) AS max
+FROM perf_test
+GROUP BY bucket
+ORDER BY bucket;
+#+end_src
+
+** 22.2 Join Performance
+:PROPERTIES:
+:CUSTOM_ID: 222-join-performance
+:END:
+#+NAME: performance-joins
+#+begin_src duckdb :session performance :timer on
+-- Create second table for joins
+CREATE TABLE perf_test2 AS
+SELECT
+    id,
+    id % 50 AS category
+FROM range(1, 100000) t(id);
+
+-- Multiple joins
+SELECT COUNT(*)
+FROM perf_test t1
+JOIN perf_test2 t2 ON t1.id = t2.id
+WHERE t1.bucket < 50;
+#+end_src
+
+** 22.3 Cleanup Performance
+:PROPERTIES:
+:CUSTOM_ID: 223-cleanup-performance
+:END:
+#+NAME: performance-cleanup
+#+begin_src duckdb :session performance
+DROP TABLE IF EXISTS perf_test;
+DROP TABLE IF EXISTS perf_test2;
+#+end_src
+
+* 23. Final Cleanup
+:PROPERTIES:
+:CUSTOM_ID: 23-final-cleanup
+:END:
+** 23.1 Session Cleanup
+:PROPERTIES:
+:CUSTOM_ID: 231-session-cleanup
+:END:
+#+NAME: final-cleanup-sessions
+#+begin_src emacs-lisp
+;; List all active sessions
+(org-babel-duckdb-list-sessions)
+#+end_src
+
+#+NAME: final-cleanup-delete-sessions
+#+begin_src emacs-lisp
+;; Delete all test sessions
+(maphash
+ (lambda (name buffer)
+   (when (string-match-p "^\\(test-\\|obduckdb\\|performance\\)" name)
+     (org-babel-duckdb-delete-session name)))
+ org-babel-duckdb-sessions)
+#+end_src
+
+** 23.2 Reset Customizations
+:PROPERTIES:
+:CUSTOM_ID: 232-reset-customizations
+:END:
+#+NAME: final-cleanup-reset-settings
+#+begin_src emacs-lisp
+;; Reset to defaults
+(setq org-babel-duckdb-progress-display 'minibuffer)
+(setq org-babel-duckdb-queue-display 'auto)
+(setq org-babel-duckdb-show-progress t)
+#+end_src
+

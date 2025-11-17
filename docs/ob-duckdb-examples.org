@@ -1,0 +1,1740 @@
+#+TITLE: ob-duckdb Examples
+#+PROPERTY: header-args:duckdb :results output :wrap example
+
+Tests and examples for all ob-duckdb functionalities. 
+
+This is meant to be seen inside an org-mode buffer. If you're seeing this in
+github none of the headers will be visible, you can either open this file in
+emacs or look at the raw version in github.
+
+* Contents :noexport:
+:PROPERTIES:
+:TOC:      :include siblings :depth 2 :ignore this
+:END:
+:CONTENTS:
+- [[#core-execution-modes][Core Execution Modes]]
+  - [[#basic-synchronous-execution][Basic Synchronous Execution]]
+  - [[#session-based-execution][Session-Based Execution]]
+  - [[#asynchronous-execution][Asynchronous Execution]]
+  - [[#kill-on-completion][Kill-on-Completion]]
+- [[#database-connections][Database Connections]]
+  - [[#in-memory-database][In-Memory Database]]
+  - [[#file-based-database][File-Based Database]]
+  - [[#motherduck-integration][MotherDuck Integration]]
+- [[#output-formats][Output Formats]]
+  - [[#box-format-default][Box Format (Default)]]
+  - [[#csv-format][CSV Format]]
+  - [[#json-format][JSON Format]]
+  - [[#markdown-format][Markdown Format]]
+  - [[#latex-format][LaTeX Format]]
+  - [[#line-format][Line Format]]
+  - [[#table-format-org-compatible][Table Format (Org-compatible)]]
+  - [[#duckbox-format][DuckBox Format]]
+  - [[#html-format][HTML Format]]
+- [[#header-arguments][Header Arguments]]
+  - [[#timer-display][Timer Display]]
+  - [[#headers-display][Headers Display]]
+  - [[#null-value-display][NULL Value Display]]
+  - [[#echo-commands][Echo Commands]]
+  - [[#bail-on-error][Bail on Error]]
+  - [[#max-rows-truncation][Max Rows Truncation]]
+  - [[#output-to-buffer][Output to Buffer]]
+- [[#variable-substitution][Variable Substitution]]
+  - [[#simple-variable-substitution][Simple Variable Substitution]]
+  - [[#table-lookup-syntax][Table Lookup Syntax]]
+  - [[#dollar-sign-variables][Dollar Sign Variables]]
+  - [[#complex-variable-substitution][Complex Variable Substitution]]
+- [[#prologue-and-epilogue][Prologue and Epilogue]]
+  - [[#basic-prologue][Basic Prologue]]
+  - [[#basic-epilogue][Basic Epilogue]]
+  - [[#combined-prologue-and-epilogue][Combined Prologue and Epilogue]]
+  - [[#prologue-with-dot-commands][Prologue with Dot Commands]]
+  - [[#epilogue-for-cleanup][Epilogue for Cleanup]]
+- [[#duckdb-dot-commands][DuckDB Dot Commands]]
+  - [[#print-command][.print Command]]
+  - [[#shell-command][.shell Command]]
+  - [[#cd-command][.cd Command]]
+  - [[#mode-command][.mode Command]]
+  - [[#help-command][.help Command]]
+  - [[#tables-command][.tables Command]]
+  - [[#schema-command][.schema Command]]
+  - [[#once-command][.once Command]]
+  - [[#read-command][.read Command]]
+- [[#progress-monitoring][Progress Monitoring]]
+  - [[#progress-display---popup-mode][Progress Display - Popup Mode]]
+  - [[#progress-display---minibuffer-mode][Progress Display - Minibuffer Mode]]
+  - [[#progress-display---disabled][Progress Display - Disabled]]
+- [[#queue-management][Queue Management]]
+  - [[#queue-display---auto-mode][Queue Display - Auto Mode]]
+  - [[#queue-display---manual-mode][Queue Display - Manual Mode]]
+  - [[#queue-position---bottom][Queue Position - Bottom]]
+  - [[#queue-position---side][Queue Position - Side]]
+- [[#session-management-commands][Session Management Commands]]
+  - [[#create-session][Create Session]]
+  - [[#list-sessions][List Sessions]]
+  - [[#display-sessions][Display Sessions]]
+  - [[#delete-session][Delete Session]]
+  - [[#cleanup-sessions][Cleanup Sessions]]
+- [[#cancellation][Cancellation]]
+  - [[#cancel-execution-by-id][Cancel Execution by ID]]
+  - [[#cancel-block-at-point][Cancel Block at Point]]
+  - [[#cancel-queued-execution][Cancel Queued Execution]]
+  - [[#cancel-with-termination-lock][Cancel with Termination Lock]]
+- [[#error-handling][Error Handling]]
+  - [[#syntax-errors][Syntax Errors]]
+  - [[#missing-table-errors][Missing Table Errors]]
+  - [[#type-errors][Type Errors]]
+  - [[#error-with-bail-on][Error with Bail On]]
+  - [[#error-with-bail-off][Error with Bail Off]]
+  - [[#async-error-handling][Async Error Handling]]
+  - [[#error-in-session][Error in Session]]
+- [[#complex-queries][Complex Queries]]
+  - [[#window-functions][Window Functions]]
+  - [[#recursive-ctes][Recursive CTEs]]
+  - [[#json-processing][JSON Processing]]
+  - [[#array-operations][Array Operations]]
+  - [[#struct-operations][Struct Operations]]
+- [[#extensions][Extensions]]
+  - [[#load-extension][Load Extension]]
+  - [[#use-extension-features][Use Extension Features]]
+- [[#edge-cases][Edge Cases]]
+  - [[#empty-result-set][Empty Result Set]]
+  - [[#single-row-result][Single Row Result]]
+  - [[#wide-table][Wide Table]]
+  - [[#very-long-string][Very Long String]]
+  - [[#special-characters][Special Characters]]
+  - [[#unicode-characters][Unicode Characters]]
+- [[#customization-testing][Customization Testing]]
+  - [[#custom-prompt-character][Custom Prompt Character]]
+  - [[#custom-output-buffer][Custom Output Buffer]]
+  - [[#custom-max-rows-default][Custom Max Rows Default]]
+- [[#stress-testing][Stress Testing]]
+  - [[#rapid-session-creation][Rapid Session Creation]]
+  - [[#rapid-async-executions][Rapid Async Executions]]
+  - [[#multiple-sessions-simultaneously][Multiple Sessions Simultaneously]]
+- [[#integration-tests][Integration Tests]]
+  - [[#session--async--variables][Session + Async + Variables]]
+  - [[#file-db--session--format][File DB + Session + Format]]
+  - [[#async--progress--queue--kill][Async + Progress + Queue + Kill]]
+  - [[#prologue--epilogue--variables--format][Prologue + Epilogue + Variables + Format]]
+- [[#regression-tests][Regression Tests]]
+  - [[#issue-async-result-routing-after-edit][Issue: Async Result Routing After Edit]]
+  - [[#issue-session-cleanup-on-buffer-kill][Issue: Session Cleanup on Buffer Kill]]
+  - [[#issue-queue-lock-persistence][Issue: Queue Lock Persistence]]
+- [[#examples-from-the-docs][Examples from the docs]]
+  - [[#readme-example-1-basic-query][README Example 1: Basic Query]]
+  - [[#readme-example-2-database-file][README Example 2: Database File]]
+  - [[#readme-example-3-async-execution][README Example 3: Async Execution]]
+  - [[#readme-example-4-session-persistence][README Example 4: Session Persistence]]
+- [[#cleanup][Cleanup]]
+:END:
+
+* Core Execution Modes
+:PROPERTIES:
+:CUSTOM_ID: core-execution-modes
+:END:
+
+** Basic Synchronous Execution
+:PROPERTIES:
+:CUSTOM_ID: basic-synchronous-execution
+:END:
+
+#+NAME: test-basic-sync
+#+begin_src duckdb
+SELECT 1 AS simple_value;
+#+end_src
+
+#+NAME: test-multi-statement-sync
+#+begin_src duckdb
+CREATE TEMPORARY TABLE temp_test (id INTEGER, value VARCHAR);
+INSERT INTO temp_test VALUES (1, 'first'), (2, 'second');
+SELECT * FROM temp_test;
+#+end_src
+
+** Session-Based Execution
+:PROPERTIES:
+:CUSTOM_ID: session-based-execution
+:END:
+
+#+NAME: test-session-create
+#+begin_src duckdb :session test-session-1
+CREATE TEMPORARY TABLE session_data (x INTEGER);
+INSERT INTO session_data VALUES (42);
+SELECT 'Session initialized' AS status;
+SELECT * FROM session_data;
+#+end_src
+
+#+NAME: test-session-reuse
+#+begin_src duckdb :session test-session-1
+SELECT * FROM session_data;
+#+end_src
+
+#+NAME: test-session-isolation
+#+begin_src duckdb :session test-session-2
+-- This should fail - table doesn't exist in this session
+SELECT * FROM session_data;
+#+end_src
+
+** Asynchronous Execution
+:PROPERTIES:
+:CUSTOM_ID: asynchronous-execution
+:END:
+
+#+NAME: test-async-basic
+#+begin_src duckdb :session async-test :async yes :max-rows 10
+SELECT * FROM generate_series(1, 100000000) AS t(n) WHERE n % 100000 = 0;
+#+end_src
+
+#+NAME: test-async-long-running
+#+begin_src duckdb :session async-test :async yes
+.shell sleep 5
+SELECT 'Completed after delay' AS status;
+#+end_src
+
+elisp block to execute the 3 following blocks sequentially
+#+begin_src elisp
+(save-excursion
+    (org-babel-goto-named-src-block "test-async-queue-multiple")(org-babel-execute-src-block)
+    (org-babel-goto-named-src-block "test-async-queue-second")  (org-babel-execute-src-block)
+    (org-babel-goto-named-src-block "test-async-queue-third")   (org-babel-execute-src-block))
+#+end_src
+
+#+NAME: test-async-queue-multiple
+#+begin_src duckdb :session async-queue :async yes
+.shell sleep 10
+SELECT 1 AS first_query;
+#+end_src
+
+#+NAME: test-async-queue-second
+#+begin_src duckdb :session async-queue :async yes
+.shell sleep 10
+SELECT 2 AS second_query;
+#+end_src
+
+#+NAME: test-async-queue-third
+#+begin_src duckdb :session async-queue :async yes
+.shell sleep 10
+SELECT 3 AS third_query;
+#+end_src
+
+** Kill-on-Completion
+:PROPERTIES:
+:CUSTOM_ID: kill-on-completion
+:END:
+We execute the first async block and wait for a moment before returning the list
+of current opened sessions, there should be no "transient-session" since it was
+killed on completion.
+#+begin_src elisp :results code
+(save-excursion
+  (org-babel-goto-named-src-block "test-kill-on-completion") (org-babel-execute-src-block)
+  (sleep-for 0.3)
+  (org-babel-duckdb-list-sessions))
+#+end_src
+
+#+NAME: test-kill-on-completion
+#+begin_src duckdb :session transient-session :async yes :kill-on-completion yes
+SELECT 'This session will be deleted' AS message;
+#+end_src
+
+This will execute the first async block and immediately queue the second block
+that has the kill-on-completion flag.
+#+begin_src elisp
+(save-excursion
+  (org-babel-goto-named-src-block "test-kill-on-completion1")
+  (org-babel-execute-src-block)
+  (org-babel-goto-named-src-block "test-kill-on-completion2")
+  (org-babel-execute-src-block))
+#+end_src
+
+#+NAME: test-kill-on-completion1
+#+begin_src duckdb :session transient-queue :async yes
+.shell sleep 3
+SELECT 'First query' AS status;
+#+end_src
+
+#+NAME: test-kill-on-completion2
+#+begin_src duckdb :session transient-queue :async yes :kill-on-completion yes
+.shell sleep 5
+SELECT 'Last query - session will be deleted' AS status;
+#+end_src
+
+* Database Connections
+:PROPERTIES:
+:CUSTOM_ID: database-connections
+:END:
+** In-Memory Database
+:PROPERTIES:
+:CUSTOM_ID: in-memory-database
+:END:
+
+#+NAME: test-in-memory
+#+begin_src duckdb :format line
+SELECT current_database();
+.mode box
+CREATE TABLE memory_table (id INTEGER);
+INSERT INTO memory_table VALUES (1), (2), (3);
+SELECT * FROM memory_table;
+#+end_src
+
+** File-Based Database
+:PROPERTIES:
+:CUSTOM_ID: file-based-database
+:END:
+
+#+NAME: test-file-db-create
+#+begin_src duckdb :db /tmp/test-ob-duckdb.db
+.mode line 
+select current_database();
+.print ""
+
+.mode box
+CREATE TABLE persistent_data (
+  id INTEGER PRIMARY KEY,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO persistent_data (id) VALUES (1), (2);
+SELECT * FROM persistent_data;
+#+end_src
+
+#+NAME: test-file-db-reuse
+#+begin_src duckdb :db /tmp/test-ob-duckdb.db
+SELECT * FROM persistent_data;
+#+end_src
+
+#+NAME: test-file-db-session
+#+begin_src duckdb :db /tmp/test-session.db :session file-session
+CREATE TABLE session_persistent (value VARCHAR);
+INSERT INTO session_persistent VALUES ('persisted');
+SELECT * FROM session_persistent;
+#+end_src
+
+** MotherDuck Integration
+:PROPERTIES:
+:CUSTOM_ID: motherduck-integration
+:END:
+Set token (saved onto a file)
+#+begin_src elisp
+(setq org-babel-duckdb-motherduck-token
+      (lambda ()
+        (with-temp-buffer
+          (insert-file-contents "~/.config/duckdb/.motherduck")
+          (string-trim (buffer-string)))))
+#+end_src
+
+#+NAME: test-motherduck-basic
+#+begin_src duckdb :md sample_data 
+SELECT 'Connected to MotherDuck' AS status;
+SELECT database, schema, name FROM ( SHOW ALL TABLES );
+#+end_src
+
+- Should fail
+#+NAME: test-motherduck-validation-fail-both-db
+#+begin_src duckdb :db /tmp/test.db :md sample_data
+-- Should fail: cannot specify both :db and :md
+SELECT 1;
+#+end_src
+
+- Should fail
+#+NAME: test-motherduck-validation-fail-token-without-md
+#+begin_src duckdb :md-token "token"
+-- Should fail: :md-token requires :md
+SELECT 1;
+#+end_src
+
+* Output Formats
+:PROPERTIES:
+:CUSTOM_ID: output-formats
+:END:
+
+** Box Format (Default)
+:PROPERTIES:
+:CUSTOM_ID: box-format-default
+:END:
+
+#+NAME: test-format-box
+#+begin_src duckdb :format box
+SELECT 'Box' AS format, 123 AS value, 'Pretty' AS description;
+#+end_src
+
+** CSV Format
+:PROPERTIES:
+:CUSTOM_ID: csv-format
+:END:
+
+#+NAME: test-format-csv
+#+begin_src duckdb :format csv
+SELECT 'CSV' AS format, 456 AS value;
+#+end_src
+
+#+NAME: test-format-csv-custom-separator
+#+begin_src duckdb :format csv :separator "@@"
+SELECT 'Custom' AS col1, 'Separator' AS col2, 'Test' AS col3;
+#+end_src
+
+** JSON Format
+:PROPERTIES:
+:CUSTOM_ID: json-format
+:END:
+
+#+NAME: test-format-json
+#+begin_src duckdb :format json :wrap src json
+SELECT 'JSON' AS format, 789 AS value, ARRAY[1,2,3] AS arr;
+#+end_src
+
+** Markdown Format
+:PROPERTIES:
+:CUSTOM_ID: markdown-format
+:END:
+
+#+NAME: test-format-markdown
+#+begin_src duckdb :format markdown :headers on
+SELECT 'Markdown' AS format, 'Table' AS style;
+#+end_src
+
+** LaTeX Format
+:PROPERTIES:
+:CUSTOM_ID: latex-format
+:END:
+
+#+NAME: test-format-latex
+#+begin_src duckdb :format latex :wrap src latex
+SELECT 'LaTeX' AS format, 'Typesetting' AS purpose;
+#+end_src
+
+** Line Format
+:PROPERTIES:
+:CUSTOM_ID: line-format
+:END:
+
+#+NAME: test-format-line
+#+begin_src duckdb :format line
+SELECT 'Line' AS format, 'One per line' AS description;
+#+end_src
+
+** Table Format (Org-compatible)
+:PROPERTIES:
+:CUSTOM_ID: table-format-org-compatible
+:END:
+
+#+NAME: test-format-table
+#+begin_src duckdb :format table
+SELECT * FROM generate_series(1, 5) AS t(num);
+#+end_src
+
+** DuckBox Format
+:PROPERTIES:
+:CUSTOM_ID: duckbox-format
+:END:
+
+#+NAME: test-format-duckbox
+#+begin_src duckdb :format duckbox
+SELECT 'DuckBox' AS format, 'Extended features' AS description;
+#+end_src
+
+** HTML Format
+:PROPERTIES:
+:CUSTOM_ID: html-format
+:END:
+
+#+NAME: test-format-html
+#+begin_src duckdb :format html :wrap export html
+SELECT 'HTML' AS format, 'Web output' AS purpose;
+#+end_src
+
+* Header Arguments
+:PROPERTIES:
+:CUSTOM_ID: header-arguments
+:END:
+** Timer Display
+:PROPERTIES:
+:CUSTOM_ID: timer-display
+:END:
+
+#+NAME: test-timer-on
+#+begin_src duckdb :timer on
+SELECT SUM(n) FROM generate_series(1, 100000) AS t(n);
+#+end_src
+
+#+NAME: test-timer-off
+#+begin_src duckdb :timer off
+SELECT SUM(n) FROM generate_series(1, 100000) AS t(n);
+#+end_src
+
+** Headers Display
+:PROPERTIES:
+:CUSTOM_ID: headers-display
+:END:
+
+#+NAME: test-headers-on
+#+begin_src duckdb :headers on :format csv
+SELECT 'With' AS headers, 'Enabled' AS status;
+#+end_src
+
+#+NAME: test-headers-off
+#+begin_src duckdb :headers off :format csv
+SELECT 'Without' AS headers, 'Disabled' AS status;
+#+end_src
+
+** NULL Value Display
+:PROPERTIES:
+:CUSTOM_ID: null-value-display
+:END:
+
+#+NAME: test-nullvalue-default
+#+begin_src duckdb
+SELECT 1 AS id, NULL AS value;
+#+end_src
+
+#+NAME: test-nullvalue-custom
+#+begin_src duckdb :nullvalue "N/A"
+SELECT 1 AS id, NULL AS missing, 'present' AS existing;
+#+end_src
+
+#+NAME: test-nullvalue-empty
+#+begin_src duckdb :nullvalue "NONE"
+SELECT NULL AS col1, NULL AS col2;
+#+end_src
+
+** Echo Commands
+:PROPERTIES:
+:CUSTOM_ID: echo-commands
+:END:
+
+#+NAME: test-echo-on
+#+begin_src duckdb :echo on
+SELECT 'Commands' AS visibility, 'Visible' AS status;
+#+end_src
+
+#+NAME: test-echo-off
+#+begin_src duckdb :echo off
+SELECT 'Commands' AS visibility, 'Hidden' AS status;
+#+end_src
+
+** Bail on Error
+:PROPERTIES:
+:CUSTOM_ID: bail-on-error
+:END:
+
+#+NAME: test-bail-on
+#+begin_src duckdb :bail on
+SELECT * FROM nonexistent_table;
+SELECT 'This should not execute' AS status;
+#+end_src
+
+#+NAME: test-bail-off
+#+begin_src duckdb :bail off
+SELECT * FROM nonexistent_table;
+SELECT 'This executes despite error' AS status;
+#+end_src
+
+** Max Rows Truncation
+:PROPERTIES:
+:CUSTOM_ID: max-rows-truncation
+:END:
+
+#+NAME: test-max-rows-default
+#+begin_src duckdb :output buffer :format line
+SELECT * FROM generate_series(1, 300000) AS t(n);
+#+end_src
+
+#+NAME: test-max-rows-custom-small
+#+begin_src duckdb :max-rows 10
+SELECT * FROM generate_series(1, 1000) AS t(n);
+#+end_src
+
+#+NAME: test-max-rows-custom-large
+#+begin_src duckdb :max-rows 50000 :output buffer :format box
+SELECT * FROM generate_series(1, 100000) AS t(n);
+#+end_src
+
+#+NAME: test-max-rows-unlimited
+#+begin_src duckdb :max-rows nil :output buffer :format tab
+SELECT * FROM generate_series(1, 250000) AS t(n);
+#+end_src
+
+** Output to Buffer
+:PROPERTIES:
+:CUSTOM_ID: output-to-buffer
+:END:
+
+#+NAME: test-output-buffer
+#+begin_src duckdb :output buffer
+SELECT * FROM generate_series(1, 100) AS t(n);
+#+end_src
+
+#+NAME: test-output-buffer-large
+#+begin_src duckdb :output buffer :max-rows 20
+SELECT * FROM generate_series(1, 10000) AS t(n);
+#+end_src
+
+* Variable Substitution
+:PROPERTIES:
+:CUSTOM_ID: variable-substitution
+:END:
+** Simple Variable Substitution
+:PROPERTIES:
+:CUSTOM_ID: simple-variable-substitution
+:END:
+
+#+NAME: test-var-simple
+#+begin_src duckdb :var threshold=100
+SELECT * FROM generate_series(1, 110) AS t(n) WHERE n > threshold;
+#+end_src
+
+#+NAME: test-var-string
+#+begin_src duckdb :var name="'Piaton'"
+SELECT name AS person, 'Hello' AS greeting;
+#+end_src
+
+#+NAME: test-var-multiple
+#+begin_src duckdb :var min=10 :var max=15
+SELECT * FROM generate_series(min, max) AS t(n);
+#+end_src
+
+** Table Lookup Syntax
+:PROPERTIES:
+:CUSTOM_ID: table-lookup-syntax
+:END:
+
+#+NAME: lookup-table
+| key   | value      |
+|-------+------------|
+| alpha | 'first'    |
+| beta  | 'second'   |
+| gamma | 'third'    |
+| limit | 50         |
+
+#+NAME: test-var-table-lookup
+#+begin_src duckdb :var data=lookup-table
+SELECT data[alpha] AS first_value, data[beta] AS second_value;
+#+end_src
+
+#+NAME: test-var-table-numeric
+#+begin_src duckdb :var config=lookup-table
+SELECT * FROM generate_series(45, config[limit]) AS t(n);
+#+end_src
+
+** Dollar Sign Variables
+:PROPERTIES:
+:CUSTOM_ID: dollar-sign-variables
+:END:
+
+#+NAME: test-var-dollar-sign
+#+begin_src duckdb :var table_name="'test_table'"
+SELECT 'Table: ' || $table_name AS info;
+#+end_src
+
+** Complex Variable Substitution
+:PROPERTIES:
+:CUSTOM_ID: complex-variable-substitution
+:END:
+
+#+NAME: query-parts
+| key    | value                                    |
+|--------+------------------------------------------|
+| select | SELECT *                                 |
+| from   | FROM generate_series(1, 10) AS t(n)      |
+| where  | WHERE n > 5                              |
+
+#+NAME: test-var-query-composition
+#+begin_src duckdb :var parts=query-parts
+parts[select] parts[from] parts[where];
+#+end_src
+
+* Prologue and Epilogue
+:PROPERTIES:
+:CUSTOM_ID: prologue-and-epilogue
+:END:
+
+** Basic Prologue
+:PROPERTIES:
+:CUSTOM_ID: basic-prologue
+:END:
+
+#+NAME: test-prologue-basic
+#+begin_src duckdb :prologue "CREATE TEMPORARY TABLE prologue_test (x INTEGER);\nINSERT INTO prologue_test VALUES (1), (2), (3);"
+SELECT * FROM prologue_test;
+#+end_src
+
+** Basic Epilogue
+:PROPERTIES:
+:CUSTOM_ID: basic-epilogue
+:END:
+
+#+NAME: test-epilogue-basic
+#+begin_src duckdb :epilogue ".print 'Query completed successfully'"
+SELECT 'Main query' AS status;
+#+end_src
+
+** Combined Prologue and Epilogue
+:PROPERTIES:
+:CUSTOM_ID: combined-prologue-and-epilogue
+:END:
+
+#+NAME: test-prologue-epilogue-combined
+#+HEADER: :prologue "CREATE TEMPORARY TABLE combined_test (id INTEGER);\nINSERT INTO combined_test VALUES (10), (20);"  
+#+HEADER: :epilogue "DROP TABLE combined_test;" 
+#+begin_src duckdb 
+SELECT * FROM combined_test;
+#+end_src
+
+** Prologue with Dot Commands
+:PROPERTIES:
+:CUSTOM_ID: prologue-with-dot-commands
+:END:
+
+#+NAME: test-prologue-dot-commands
+#+begin_src duckdb :prologue ".mode markdown\n.timer on"
+SELECT 'Configured' AS status;
+#+end_src
+
+** Epilogue for Cleanup
+:PROPERTIES:
+:CUSTOM_ID: epilogue-for-cleanup
+:END:
+#+HEADER: :prologue "CREATE TEMPORARY TABLE temp_data (val INTEGER);\nINSERT INTO temp_data VALUES (100);"  
+#+HEADER: :epilogue "DROP TABLE temp_data;" 
+#+NAME: test-epilogue-cleanup
+#+begin_src duckdb :session cleanup-session 
+SELECT * FROM temp_data;
+#+end_src
+
+* DuckDB Dot Commands
+:PROPERTIES:
+:CUSTOM_ID: duckdb-dot-commands
+:END:
+** .print Command
+:PROPERTIES:
+:CUSTOM_ID: print-command
+:END:
+
+#+NAME: test-dot-print
+#+begin_src duckdb
+.print "This is a printed message"
+#+end_src
+
+#+NAME: test-dot-print-multiple
+#+begin_src duckdb
+.print "Line 1"
+.print "Line 2"
+.print "Line 3"
+#+end_src
+
+** .shell Command
+:PROPERTIES:
+:CUSTOM_ID: shell-command
+:END:
+
+#+NAME: test-dot-shell-ls
+#+begin_src duckdb
+.shell ls -la /tmp
+#+end_src
+
+#+NAME: test-dot-shell-date
+#+begin_src duckdb
+.shell date
+#+end_src
+
+#+NAME: test-dot-shell-echo
+#+begin_src duckdb
+.shell echo "Hello from shell"
+#+end_src
+
+#+NAME: test-dot-shell-combined
+#+begin_src duckdb
+.shell mkdir -p /tmp/duckdb-test
+.shell echo "test content" > /tmp/duckdb-test/file.txt
+.shell cat /tmp/duckdb-test/file.txt
+.shell rm -rf /tmp/duckdb-test
+#+end_src
+
+** .cd Command
+:PROPERTIES:
+:CUSTOM_ID: cd-command
+:END:
+
+#+NAME: test-dot-cd
+#+begin_src duckdb
+.cd /tmp
+.shell pwd
+#+end_src
+
+** .mode Command
+:PROPERTIES:
+:CUSTOM_ID: mode-command
+:END:
+
+#+NAME: test-dot-mode-changes
+#+begin_src duckdb
+.mode csv
+SELECT 'CSV mode' AS format;
+.print ''
+.mode markdown
+SELECT 'Markdown mode' AS format;
+#+end_src
+
+** .help Command
+:PROPERTIES:
+:CUSTOM_ID: help-command
+:END:
+
+#+NAME: test-dot-help
+#+begin_src duckdb
+.help
+#+end_src
+
+#+NAME: test-dot-help-all
+#+begin_src duckdb
+.help -all
+#+end_src
+
+** .tables Command
+:PROPERTIES:
+:CUSTOM_ID: tables-command
+:END:
+
+#+NAME: test-dot-tables
+#+begin_src duckdb :session tables-session
+CREATE TABLE test1 (id INTEGER);
+CREATE TABLE test2 (id INTEGER);
+.tables
+#+end_src
+
+** .schema Command
+:PROPERTIES:
+:CUSTOM_ID: schema-command
+:END:
+
+#+NAME: test-dot-schema
+#+begin_src duckdb :session schema-session
+CREATE TABLE schema_test (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+.schema schema_test
+#+end_src
+
+** .once Command
+:PROPERTIES:
+:CUSTOM_ID: once-command
+:END:
+
+#+NAME: test-dot-once
+#+begin_src duckdb
+.once /tmp/duckdb-output.txt
+SELECT 'Output redirected' AS status;
+.shell cat /tmp/duckdb-output.txt
+#+end_src
+
+** .read Command
+:PROPERTIES:
+:CUSTOM_ID: read-command
+:END:
+
+#+NAME: test-dot-read
+#+begin_src duckdb
+.shell echo "SELECT 'From file' AS source;" > /tmp/test-query.sql
+.read /tmp/test-query.sql
+.shell rm /tmp/test-query.sql
+#+end_src
+
+* Progress Monitoring
+:PROPERTIES:
+:CUSTOM_ID: progress-monitoring
+:END:
+
+** Progress Display - Popup Mode
+:PROPERTIES:
+:CUSTOM_ID: progress-display---popup-mode
+:END:
+
+#+NAME: test-progress-popup
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-progress-display 'popup)
+#+end_src
+
+#+NAME: test-progress-popup-execution
+#+begin_src duckdb :session progress-test :async yes
+.shell sleep 5
+SELECT 'Progress shown in popup' AS status;
+#+end_src
+
+** Progress Display - Minibuffer Mode
+:PROPERTIES:
+:CUSTOM_ID: progress-display---minibuffer-mode
+:END:
+
+#+NAME: test-progress-minibuffer
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-progress-display 'minibuffer)
+#+end_src
+
+#+NAME: test-progress-minibuffer-execution
+#+begin_src duckdb :session progress-test-2 :async yes
+.shell sleep 3
+SELECT 'Progress shown in minibuffer' AS status;
+#+end_src
+
+** Progress Display - Disabled
+:PROPERTIES:
+:CUSTOM_ID: progress-display---disabled
+:END:
+
+#+NAME: test-progress-disabled
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-show-progress nil)
+#+end_src
+
+#+NAME: test-progress-disabled-execution
+#+begin_src duckdb :session progress-test-3 :async yes
+.shell sleep 2
+SELECT 'No progress shown' AS status;
+#+end_src
+
+* Queue Management
+:PROPERTIES:
+:CUSTOM_ID: queue-management
+:END:
+** Queue Display - Auto Mode
+:PROPERTIES:
+:CUSTOM_ID: queue-display---auto-mode
+:END:
+
+#+NAME: test-queue-auto
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-queue-display 'auto)
+#+end_src
+
+#+NAME: test-queue-auto-first
+#+begin_src duckdb :session queue-auto :async yes
+.shell sleep 10
+SELECT 1 AS query_num;
+#+end_src
+
+#+NAME: test-queue-auto-second
+#+begin_src duckdb :session queue-auto :async yes
+.shell sleep 10
+SELECT 2 AS query_num;
+#+end_src
+
+#+NAME: test-queue-auto-third
+#+begin_src duckdb :session queue-auto :async yes
+.shell sleep 10
+SELECT 3 AS query_num;
+#+end_src
+
+** Queue Display - Manual Mode
+:PROPERTIES:
+:CUSTOM_ID: queue-display---manual-mode
+:END:
+
+#+NAME: test-queue-manual
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-queue-display 'manual)
+#+end_src
+
+#+NAME: test-queue-manual-execution
+#+begin_src duckdb :session queue-manual :async yes
+.shell sleep 15
+SELECT 'Manual queue display' AS status;
+#+end_src
+
+** Queue Position - Bottom
+:PROPERTIES:
+:CUSTOM_ID: queue-position---bottom
+:END:
+
+#+NAME: test-queue-position-bottom
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-queue-position 'bottom)
+#+end_src
+
+** Queue Position - Side
+:PROPERTIES:
+:CUSTOM_ID: queue-position---side
+:END:
+
+#+NAME: test-queue-position-side
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-queue-position 'side)
+#+end_src
+
+* Session Management Commands
+:PROPERTIES:
+:CUSTOM_ID: session-management-commands
+:END:
+** Create Session
+:PROPERTIES:
+:CUSTOM_ID: create-session
+:END:
+
+#+NAME: test-session-create-command
+#+begin_src emacs-lisp
+(org-babel-duckdb-create-session "test-created-session")
+#+end_src
+
+#+NAME: test-session-create-with-db
+#+begin_src emacs-lisp
+(org-babel-duckdb-create-session "test-created-db-session" "/tmp/created-session.db")
+#+end_src
+
+** List Sessions
+:PROPERTIES:
+:CUSTOM_ID: list-sessions
+:END:
+
+#+NAME: test-list-sessions
+#+begin_src emacs-lisp :results code
+(org-babel-duckdb-list-sessions)
+#+end_src
+
+** Display Sessions
+:PROPERTIES:
+:CUSTOM_ID: display-sessions
+:END:
+
+#+NAME: test-display-sessions
+#+begin_src emacs-lisp
+(org-babel-duckdb-display-sessions)
+#+end_src
+
+** Delete Session
+:PROPERTIES:
+:CUSTOM_ID: delete-session
+:END:
+
+#+NAME: test-delete-session
+#+begin_src emacs-lisp
+(org-babel-duckdb-delete-session "test-created-session")
+#+end_src
+
+** Cleanup Sessions
+:PROPERTIES:
+:CUSTOM_ID: cleanup-sessions
+:END:
+
+#+NAME: test-cleanup-sessions
+#+begin_src emacs-lisp
+(org-babel-duckdb-cleanup-sessions)
+#+end_src
+
+* Cancellation
+:PROPERTIES:
+:CUSTOM_ID: cancellation
+:END:
+
+** Cancel Execution by ID
+:PROPERTIES:
+:CUSTOM_ID: cancel-execution-by-id
+:END:
+
+#+NAME: test-cancel-long-running
+#+begin_src duckdb :session cancel-test :async yes
+.shell sleep 60
+SELECT 'This will be cancelled' AS status;
+#+end_src
+
+
+After starting the above, run:
+- ~M-x org-babel-duckdb-cancel-execution~
+- and select the execution from the list
+- NOTE :: ~.shell sleep~ spawns a process by itself, so even if we cancel a ~sleep~
+  src block, we still get results due to the interrupt acting upon ~.shell sleep~
+  instead of the duckdb process. This is a quirk of the .shell dot command and
+  there's not much we can do about it, it suffices as a way of simulating a long
+  query.
+
+** Cancel Block at Point
+:PROPERTIES:
+:CUSTOM_ID: cancel-block-at-point
+:END:
+
+#+NAME: test-cancel-at-point-block
+#+begin_src duckdb :session cancel-point-test :async yes
+.shell sleep 45
+SELECT 'Cancel me at point' AS status;
+#+end_src
+
+- Place cursor in the above block and run:
+  - ~M-x org-babel-duckdb-cancel-block-at-point~
+  - NOTE :: ~.shell sleep~ spawns a process by itself, so even if we cancel a ~sleep~
+    src block, we still get results due to the interrupt acting upon ~.shell sleep~
+    instead of the duckdb process. This is a quirk of the .shell dot command and
+    there's not much we can do about it, it suffices as a way of simulating a long
+    query.
+
+** Cancel Queued Execution
+:PROPERTIES:
+:CUSTOM_ID: cancel-queued-execution
+:END:
+
+#+NAME: test-cancel-queued-first
+#+begin_src duckdb :session cancel-queue :async yes
+.shell sleep 20
+SELECT 1 AS query;
+#+end_src
+
+#+NAME: test-cancel-queued-second
+#+begin_src duckdb :session cancel-queue :async yes
+.shell sleep 20
+SELECT 2 AS query;
+#+end_src
+
+#+NAME: test-cancel-queued-third
+#+begin_src duckdb :session cancel-queue :async yes
+.shell sleep 20
+SELECT 3 AS query;
+#+end_src
+
+#+NAME: test-cancel-queued-command
+#+begin_src emacs-lisp
+;; Cancel the second or third execution while first is running
+;; M-x org-babel-duckdb-cancel-execution
+#+end_src
+
+** Cancel with Termination Lock
+:PROPERTIES:
+:CUSTOM_ID: cancel-with-termination-lock
+:END:
+
+#+NAME: test-cancel-termination-first
+#+begin_src duckdb :session cancel-term :async yes
+.shell sleep 30
+SELECT 'First' AS query;
+#+end_src
+
+#+NAME: test-cancel-termination-killer
+#+begin_src duckdb :session cancel-term :async yes :kill-on-completion yes
+.shell sleep 30
+SELECT 'Terminator' AS query;
+#+end_src
+
+#+NAME: test-cancel-termination-command
+#+begin_src emacs-lisp
+;; Cancel the kill-on-completion execution to lift termination lock
+;; M-x org-babel-duckdb-cancel-execution
+#+end_src
+
+* Error Handling
+:PROPERTIES:
+:CUSTOM_ID: error-handling
+:END:
+
+** Syntax Errors
+:PROPERTIES:
+:CUSTOM_ID: syntax-errors
+:END:
+
+#+NAME: test-error-syntax
+#+begin_src duckdb
+SELECT * FORM invalid_syntax;
+#+end_src
+
+** Missing Table Errors
+:PROPERTIES:
+:CUSTOM_ID: missing-table-errors
+:END:
+
+#+NAME: test-error-missing-table
+#+begin_src duckdb
+SELECT * FROM nonexistent_table;
+#+end_src
+
+** Type Errors
+:PROPERTIES:
+:CUSTOM_ID: type-errors
+:END:
+
+#+NAME: test-error-type-mismatch
+#+begin_src duckdb
+SELECT 'text' + 123;
+#+end_src
+
+** Error with Bail On
+:PROPERTIES:
+:CUSTOM_ID: error-with-bail-on
+:END:
+
+#+NAME: test-error-bail-on
+#+begin_src duckdb :bail on
+SELECT * FROM error_table;
+SELECT 'Should not execute' AS status;
+#+end_src
+
+** Error with Bail Off
+:PROPERTIES:
+:CUSTOM_ID: error-with-bail-off
+:END:
+
+#+NAME: test-error-bail-off
+#+begin_src duckdb :bail off
+SELECT * FROM error_table;
+SELECT 'Executes despite error' AS status;
+#+end_src
+
+** Async Error Handling
+:PROPERTIES:
+:CUSTOM_ID: async-error-handling
+:END:
+
+#+NAME: test-async-error
+#+begin_src duckdb :session async-error :async yes
+SELECT * FROM nonexistent_async_table;
+#+end_src
+
+** Error in Session
+:PROPERTIES:
+:CUSTOM_ID: error-in-session
+:END:
+
+#+NAME: test-session-error
+#+begin_src duckdb :session error-session
+CREATE TABLE error_test (id INTEGER);
+SELECT * FROM error_test;
+SELECT * FROM another_error_table;
+#+end_src
+
+* Complex Queries
+:PROPERTIES:
+:CUSTOM_ID: complex-queries
+:END:
+
+** Window Functions
+:PROPERTIES:
+:CUSTOM_ID: window-functions
+:END:
+
+#+NAME: test-window-functions
+#+begin_src duckdb
+WITH sales AS (
+  SELECT * FROM (VALUES
+    ('North', 100),
+    ('North', 150),
+    ('South', 120),
+    ('South', 90)
+  ) AS t(region, amount)
+)
+SELECT
+  region,
+  amount,
+  SUM(amount) OVER (PARTITION BY region) AS region_total,
+  RANK() OVER (PARTITION BY region ORDER BY amount DESC) AS rank
+FROM sales;
+#+end_src
+
+** Recursive CTEs
+:PROPERTIES:
+:CUSTOM_ID: recursive-ctes
+:END:
+
+#+NAME: test-recursive-cte
+#+begin_src duckdb
+WITH RECURSIVE numbers AS (
+  SELECT 1 AS n
+  UNION ALL
+  SELECT n + 1 FROM numbers WHERE n < 10
+)
+SELECT * FROM numbers;
+#+end_src
+
+** JSON Processing
+:PROPERTIES:
+:CUSTOM_ID: json-processing
+:END:
+
+#+NAME: test-json-processing
+#+begin_src duckdb
+SELECT
+  json_extract('{"name": "Alice", "age": 30}', '$.name') AS name,
+  json_object('id', 1, 'tags', json_array('red', 'blue')) AS created_json;
+#+end_src
+
+** Array Operations
+:PROPERTIES:
+:CUSTOM_ID: array-operations
+:END:
+
+#+NAME: test-array-operations
+#+begin_src duckdb
+SELECT
+  ARRAY[1, 2, 3] AS arr1,
+  ARRAY[4, 5, 6] AS arr2,
+  list_concat(ARRAY[1, 2], ARRAY[3, 4]) AS concatenated;
+#+end_src
+
+** Struct Operations
+:PROPERTIES:
+:CUSTOM_ID: struct-operations
+:END:
+
+#+NAME: test-struct-operations
+#+begin_src duckdb
+SELECT
+  STRUCT_PACK(x := 1, y := 'hello') AS struct_val,
+  {'a': 10, 'b': 20} AS named_struct;
+#+end_src
+
+* Extensions
+:PROPERTIES:
+:CUSTOM_ID: extensions
+:END:
+** Load Extension
+:PROPERTIES:
+:CUSTOM_ID: load-extension
+:END:
+
+#+NAME: test-load-extension
+#+begin_src duckdb
+INSTALL httpfs;
+LOAD httpfs;
+SELECT 'Extension loaded' AS status;
+select * from duckdb_extensions();
+#+end_src
+
+** Use Extension Features
+:PROPERTIES:
+:CUSTOM_ID: use-extension-features
+:END:
+
+#+NAME: test-extension-usage
+#+begin_src duckdb
+INSTALL json;
+LOAD json;
+SELECT json_extract('{"a": 1}', '$.a') AS extracted;
+#+end_src
+
+* Edge Cases
+:PROPERTIES:
+:CUSTOM_ID: edge-cases
+:END:
+
+** Empty Result Set
+:PROPERTIES:
+:CUSTOM_ID: empty-result-set
+:END:
+
+#+NAME: test-empty-result
+#+begin_src duckdb
+SELECT * FROM generate_series(1, 0) AS t(n);
+#+end_src
+
+** Single Row Result
+:PROPERTIES:
+:CUSTOM_ID: single-row-result
+:END:
+
+#+NAME: test-single-row
+#+begin_src duckdb
+SELECT 1 AS single_value;
+#+end_src
+
+** Wide Table
+:PROPERTIES:
+:CUSTOM_ID: wide-table
+:END:
+
+#+NAME: test-wide-table
+#+begin_src duckdb :format duckbox
+SELECT
+  1 AS col1, 2 AS col2, 3 AS col3, 4 AS col4, 5 AS col5,
+  6 AS col6, 7 AS col7, 8 AS col8, 9 AS col9, 10 AS col10,
+  11 AS col11, 12 AS col12, 13 AS col13, 14 AS col14, 15 AS col15,
+  1 AS col1, 2 AS col2, 3 AS col3, 4 AS col4, 5 AS col5,
+  6 AS col6, 7 AS col7, 8 AS col8, 9 AS col9, 10 AS col10,
+  11 AS col11, 12 AS col12, 13 AS col13, 14 AS col14, 15 AS col15,
+  1 AS col1, 2 AS col2, 3 AS col3, 4 AS col4, 5 AS col5,
+  6 AS col6, 7 AS col7, 8 AS col8, 9 AS col9, 10 AS col10,
+  11 AS col11, 12 AS col12, 13 AS col13, 14 AS col14, 15 AS col15,
+  1 AS col1, 2 AS col2, 3 AS col3, 4 AS col4, 5 AS col5,
+  6 AS col6, 7 AS col7, 8 AS col8, 9 AS col9, 10 AS col10,
+  11 AS col11, 12 AS col12, 13 AS col13, 14 AS col14, 15 AS col15
+;
+#+end_src
+
+** Very Long String
+:PROPERTIES:
+:CUSTOM_ID: very-long-string
+:END:
+
+#+NAME: test-long-string
+#+begin_src duckdb
+SELECT repeat('A', 1000) AS long_string;
+#+end_src
+
+** Special Characters
+:PROPERTIES:
+:CUSTOM_ID: special-characters
+:END:
+
+#+NAME: test-special-characters
+#+begin_src duckdb
+SELECT
+  'Single ''quotes''' AS single_quotes,
+  'Double "quotes"' AS double_quotes,
+  'Newline
+character' AS newline,
+  'Tab	character' AS tab;
+#+end_src
+
+** Unicode Characters
+:PROPERTIES:
+:CUSTOM_ID: unicode-characters
+:END:
+
+#+NAME: test-unicode
+#+begin_src duckdb
+SELECT
+  '你好世界' AS chinese,
+  'مرحبا' AS arabic,
+  '🦆🔥' AS emoji;
+#+end_src
+
+* Customization Testing
+:PROPERTIES:
+:CUSTOM_ID: customization-testing
+:END:
+
+** Custom Prompt Character
+:PROPERTIES:
+:CUSTOM_ID: custom-prompt-character
+:END:
+
+#+NAME: test-custom-prompt
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-prompt-char "🦆>")
+#+end_src
+
+#+NAME: test-custom-prompt-execution
+#+begin_src duckdb :session custom-prompt
+SELECT 'Custom prompt test' AS status;
+#+end_src
+
+** Custom Output Buffer
+:PROPERTIES:
+:CUSTOM_ID: custom-output-buffer
+:END:
+
+#+NAME: test-custom-output-buffer
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-output-buffer "*My-DuckDB-Output-New*")
+#+end_src
+
+#+NAME: test-custom-output-buffer-usage
+#+begin_src duckdb :output buffer
+SELECT 'Custom buffer test' AS status;
+#+end_src
+
+** Custom Max Rows Default
+:PROPERTIES:
+:CUSTOM_ID: custom-max-rows-default
+:END:
+
+#+NAME: test-custom-max-rows
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-max-rows 5)
+#+end_src
+
+#+NAME: test-custom-max-rows-execution
+#+begin_src duckdb :format line
+SELECT * FROM generate_series(1, 100) AS t(n);
+#+end_src
+
+* Stress Testing
+:PROPERTIES:
+:CUSTOM_ID: stress-testing
+:END:
+** Rapid Session Creation
+:PROPERTIES:
+:CUSTOM_ID: rapid-session-creation
+:END:
+
+#+NAME: test-rapid-sessions
+#+begin_src emacs-lisp
+(dotimes (i 20)
+  (org-babel-duckdb-create-session (format "rapid-session-%d" i)))
+(org-babel-duckdb-display-sessions)
+#+end_src
+#+begin_src elisp
+(dotimes (i 20)
+  (org-babel-duckdb-delete-session (format "rapid-session-%d" i)))
+#+end_src
+
+** Rapid Async Executions
+:PROPERTIES:
+:CUSTOM_ID: rapid-async-executions
+:END:
+
+#+begin_src elisp
+(save-excursion
+  (org-babel-goto-named-src-block "test-rapid-async-1") (org-babel-execute-src-block)
+  (org-babel-goto-named-src-block "test-rapid-async-2") (org-babel-execute-src-block)
+  (org-babel-goto-named-src-block "test-rapid-async-3") (org-babel-execute-src-block)
+  (org-babel-goto-named-src-block "test-rapid-async-4") (org-babel-execute-src-block)
+  (org-babel-goto-named-src-block "test-rapid-async-5") (org-babel-execute-src-block))
+#+end_src
+
+#+NAME: test-rapid-async-1
+#+begin_src duckdb :async yes :session readme-async :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'
+SELECT * FROM read_parquet('parquet_url') WHERE id < 10;
+#+end_src
+
+#+NAME: test-rapid-async-2
+#+begin_src duckdb :async yes :session readme-async :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'
+SELECT * FROM read_parquet('parquet_url') WHERE id < 10;
+#+end_src
+
+#+NAME: test-rapid-async-3
+#+begin_src duckdb :async yes :session readme-async :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'
+SELECT * FROM read_parquet('parquet_url') WHERE id < 10;
+#+end_src
+
+#+NAME: test-rapid-async-4
+#+begin_src duckdb :async yes :session readme-async :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'
+SELECT * FROM read_parquet('parquet_url') WHERE id < 10;
+#+end_src
+
+#+NAME: test-rapid-async-5
+#+begin_src duckdb :async yes :session readme-async :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'
+SELECT * FROM read_parquet('parquet_url') WHERE id < 10;
+#+end_src
+
+** Multiple Sessions Simultaneously
+:PROPERTIES:
+:CUSTOM_ID: multiple-sessions-simultaneously
+:END:
+#+begin_src elisp
+(save-excursion
+  (org-babel-goto-named-src-block "test-multi-session-1") (org-babel-execute-src-block)
+  (org-babel-goto-named-src-block "test-multi-session-2") (org-babel-execute-src-block)
+  (org-babel-goto-named-src-block "test-multi-session-3") (org-babel-execute-src-block))
+#+end_src
+
+#+NAME: test-multi-session-1
+#+begin_src duckdb :session multi-1 :async yes
+.shell sleep 5
+SELECT 'Session 1' AS session;
+#+end_src
+
+#+NAME: test-multi-session-2
+#+begin_src duckdb :session multi-2 :async yes
+.shell sleep 5
+SELECT 'Session 2' AS session;
+#+end_src
+
+#+NAME: test-multi-session-3
+#+begin_src duckdb :session multi-3 :async yes
+.shell sleep 5
+SELECT 'Session 3' AS session;
+#+end_src
+
+* Integration Tests
+:PROPERTIES:
+:CUSTOM_ID: integration-tests
+:END:
+** Session + Async + Variables
+:PROPERTIES:
+:CUSTOM_ID: session--async--variables
+:END:
+
+#+NAME: test-integration-1
+#+begin_src duckdb :session int-test-1 :async yes :var limit=100
+SELECT * FROM generate_series(1, limit) AS t(n) WHERE n % 10 = 0;
+#+end_src
+
+** File DB + Session + Format
+:PROPERTIES:
+:CUSTOM_ID: file-db--session--format
+:END:
+
+#+NAME: test-integration-2
+#+begin_src duckdb :db /tmp/integration-test.db :session int-session :format markdown
+CREATE TABLE IF NOT EXISTS integration_data (id INTEGER, value VARCHAR);
+INSERT INTO integration_data VALUES (1, 'test');
+SELECT * FROM integration_data;
+#+end_src
+
+** Async + Progress + Queue + Kill
+:PROPERTIES:
+:CUSTOM_ID: async--progress--queue--kill
+:END:
+
+#+NAME: test-integration-3-first
+#+begin_src duckdb :session int-kill :async yes
+.shell sleep 3
+SELECT 'First' AS query;
+#+end_src
+
+#+NAME: test-integration-3-second
+#+begin_src duckdb :session int-kill :async yes :kill-on-completion yes
+.shell sleep 3
+SELECT 'Second and final' AS query;
+#+end_src
+
+** Prologue + Epilogue + Variables + Format
+:PROPERTIES:
+:CUSTOM_ID: prologue--epilogue--variables--format
+:END:
+
+#+NAME: config-table
+| key     | value |
+|---------|-------|
+| rows    | 20    |
+| divisor | 5     |
+
+#+NAME: test-integration-4
+#+begin_src duckdb :var cfg=config-table :prologue "CREATE TEMPORARY TABLE temp_int (n INTEGER);" :epilogue "DROP TABLE temp_int;" :format markdown
+INSERT INTO temp_int SELECT * FROM generate_series(1, cfg[rows]) AS t(n);
+SELECT * FROM temp_int WHERE n % cfg[divisor] = 0;
+#+end_src
+
+* Regression Tests
+:PROPERTIES:
+:CUSTOM_ID: regression-tests
+:END:
+
+** Issue: Async Result Routing After Edit
+:PROPERTIES:
+:CUSTOM_ID: issue-async-result-routing-after-edit
+:END:
+
+#+NAME: test-regression-async-routing
+#+begin_src duckdb :session regression-1 :async yes
+.shell sleep 5
+SELECT 'Result routing test' AS status;
+#+end_src
+
+- Edit the document between execution and completion
+- Results should still route correctly
+
+** Issue: Session Cleanup on Buffer Kill
+:PROPERTIES:
+:CUSTOM_ID: issue-session-cleanup-on-buffer-kill
+:END:
+
+#+NAME: test-regression-session-cleanup
+#+begin_src emacs-lisp
+(let ((session-name "cleanup-test"))
+  (org-babel-duckdb-create-session session-name)
+  (kill-buffer (format "*DuckDB:%s*" session-name))
+  (org-babel-duckdb-cleanup-sessions)
+  (not (gethash session-name org-babel-duckdb-sessions)))
+#+end_src
+
+** Issue: Queue Lock Persistence
+:PROPERTIES:
+:CUSTOM_ID: issue-queue-lock-persistence
+:END:
+
+#+NAME: test-regression-queue-lock
+#+begin_src duckdb :session lock-test :async yes :kill-on-completion yes
+.shell sleep 20
+SELECT 'Terminator' AS status;
+#+end_src
+
+- Cancel the above execution
+- Then verify new executions are accepted
+
+#+NAME: test-regression-verify-lock-lifted
+#+begin_src duckdb :session lock-test :async yes
+SELECT 'Lock should be lifted' AS status;
+#+end_src
+
+* Examples from the docs
+:PROPERTIES:
+:CUSTOM_ID: examples-from-the-docs
+:END:
+** README Example 1: Basic Query
+:PROPERTIES:
+:CUSTOM_ID: readme-example-1-basic-query
+:END:
+
+#+NAME: doc-example-basic
+#+begin_src duckdb
+SELECT * FROM generate_series(1, 5) AS s(num);
+#+end_src
+
+** README Example 2: Database File
+:PROPERTIES:
+:CUSTOM_ID: readme-example-2-database-file
+:END:
+
+#+NAME: doc-example-db-file
+#+begin_src duckdb :db /tmp/readme-example.duckdb
+CREATE TABLE IF NOT EXISTS test_table (
+  id INTEGER,
+  name VARCHAR,
+  created_at TIMESTAMP
+);
+INSERT INTO test_table VALUES
+  (1, 'First entry', CURRENT_TIMESTAMP),
+  (2, 'Second entry', CURRENT_TIMESTAMP);
+SELECT * FROM test_table;
+#+end_src
+
+** README Example 3: Async Execution
+:PROPERTIES:
+:CUSTOM_ID: readme-example-3-async-execution
+:END:
+
+#+NAME: doc-example-async
+#+begin_src duckdb :async yes :session readme-async :var parquet_url='https://github.com/apache/parquet-mr/raw/master/parquet-hadoop/src/test/resources/test-file-with-no-column-indexes-1.parquet'
+SELECT * FROM read_parquet('parquet_url') WHERE id < 10;
+#+end_src
+
+** README Example 4: Session Persistence
+:PROPERTIES:
+:CUSTOM_ID: readme-example-4-session-persistence
+:END:
+
+#+NAME: doc-example-session-1
+#+begin_src duckdb :session readme-session
+CREATE TEMPORARY TABLE temp_data AS
+  SELECT * FROM generate_series(1, 10) AS t(num);
+SELECT 'Table created' AS status;
+#+end_src
+
+#+NAME: doc-example-session-2
+#+begin_src duckdb :session readme-session
+SELECT SUM(num) AS total, AVG(num) AS average FROM temp_data;
+#+end_src
+
+* Cleanup
+:PROPERTIES:
+:CUSTOM_ID: cleanup
+:END:
+
+#+NAME: cleanup-all-sessions
+#+begin_src emacs-lisp
+(maphash
+ (lambda (name buffer)
+   (org-babel-duckdb-delete-session name))
+ org-babel-duckdb-sessions)
+#+end_src
+
+#+NAME: cleanup-test-files
+#+begin_src shell
+rm -f /tmp/test-ob-duckdb.db
+rm -f /tmp/test-session.db
+rm -f /tmp/created-session.db
+rm -f /tmp/integration-test.db
+rm -f /tmp/readme-example.duckdb
+#+end_src
+
+#+NAME: reset-customizations
+#+begin_src emacs-lisp
+(setq org-babel-duckdb-progress-display 'minibuffer)
+(setq org-babel-duckdb-queue-display 'auto)
+(setq org-babel-duckdb-queue-position 'side)
+(setq org-babel-duckdb-show-progress t)
+(setq org-babel-duckdb-max-rows 200000)
+(setq org-babel-duckdb-prompt-char "⬤◗")
+(setq org-babel-duckdb-output-buffer "*DuckDB-output*")
+#+end_src
+
+This document covers:
+
+Each test is named with =#+NAME:= for easy reference and execution. The tests are
+organized hierarchically for easy navigation and can be executed individually or
+in groups, by doing M-x ~org-babel-execute-subtree~.
+
