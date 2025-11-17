@@ -62,7 +62,6 @@
 ;; - Execution history (`org-duckdb-blocks-recent')
 ;; - Block registry (`org-duckdb-blocks-list')
 ;; - Navigation commands (`org-duckdb-blocks-navigate-recent')
-;; - Enhanced cancellation support
 ;;
 ;; Property storage modes (only when tracking enabled):
 ;; - Invisible (default): Text properties, no document pollution
