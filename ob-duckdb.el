@@ -395,14 +395,14 @@ Only populated when `org-babel-duckdb-show-progress' is non-nil and
 Keys are session name strings.
 Values are plists with:
   :pending              - List of exec-id strings awaiting completion
-  :completion-handlers  - Hash table mapping exec-id to callback functions
-  :send-data            - Hash table mapping exec-id to command strings
-  :temp-err-files       - Hash table mapping exec-id to error file paths
-  :original-filter      - Original process filter to restore when queue empties
-  :termination-pending  - Non-nil when session marked for deletion after queue empties
-  :termination-exec-id  - Exec-id of execution that requested termination
+  :completion-handlers  - Hash table: exec-id to callback functions
+  :send-data            - Hash table: exec-id to command strings
+  :temp-err-files       - Hash table: exec-id to error file paths
+  :original-filter      - Original process filter, restored when empty
+  :termination-pending  - Non-nil when session deletion pending
+  :termination-exec-id  - Exec-id of execution requesting termination
 
-Enables multiple async executions in same session with strict FIFO ordering.
+Enables multiple async executions per session with strict FIFO ordering.
 Only first pending execution runs at a time; completion triggers next.
 
 Managed by `org-babel-duckdb--enqueue-execution',
@@ -435,12 +435,13 @@ Also see `org-babel-duckdb--refresh-queue-display'.")
   "Maps exec-id to execution status for queue display.
 
 Keys are execution ID strings (UUIDs).
-Values are symbols: queued, executing, completed, error, cancelled, completed-with-errors.
+Values are symbols: queued, executing, completed, error, cancelled,
+completed-with-errors.
 
 Updated by `org-babel-duckdb--update-exec-status' via process filter
 and completion-handler callbacks.
 
-Only used for queue display. Separate from org-duckdb-blocks tracking
+Used for queue display. Separate from org-duckdb-blocks tracking
 to work without full tracking enabled.
 
 Also see `org-babel-duckdb--get-exec-status'.")
@@ -604,7 +605,7 @@ Used by `org-babel-duckdb--refresh-queue-display' and
 
 SESSION is session name string.
 
-Retrieves first pending exec-id from queue, updates status to 'executing,
+Retrieves first pending exec-id from queue, updates status to \='executing,
 and sends queued commands to session process.
 
 Called by `org-babel-duckdb--enqueue-execution' for first execution and
@@ -636,7 +637,7 @@ Also see `org-babel-duckdb--session-output-filter' for completion detection."
 SESSION is session name string.
 
 Shows queue when:
-- `org-babel-duckdb-queue-display' is 'auto
+- `org-babel-duckdb-queue-display' is \='auto
 - Queue has 2+ pending executions
 - Queue monitor not already visible
 
@@ -668,9 +669,9 @@ Installs cooperative filter on first execution via
 
 Sends commands immediately if queue was empty, otherwise queues for later.
 
-Updates status to 'executing for first execution, 'queued for others.
+Updates status to \='executing for first execution, \='queued for others.
 
-Auto-shows queue monitor if `org-babel-duckdb-queue-display' is 'auto.
+Auto-shows queue monitor if `org-babel-duckdb-queue-display' is \='auto.
 
 When KILL-ON-COMPLETION is non-nil, sets :termination-pending flag and
 stores EXEC-ID in :termination-exec-id to prevent further executions from
@@ -739,10 +740,10 @@ SESSION is session name string.
 EXEC-ID is completed execution UUID.
 
 Updates queue structure in `org-babel-duckdb--session-queues'.
-Removes completion-handler, send-data, and temp-err-file for completed execution.
+Removes completion-handler, send-data, and temp-err-file entries.
 
-If completed execution was marked for :kill-on-completion, termination flags
-are already cleared by session deletion in completion handler, so no action needed.
+If completed execution had :kill-on-completion, termination flags
+are already cleared by session deletion in completion handler.
 
 Triggers next execution via `org-babel-duckdb--session-send-next-request'
 if queue not empty. Skips cancelled executions automatically.
@@ -788,12 +789,13 @@ Also see `org-babel-duckdb--enqueue-execution' for queue initialization."
   "Update execution status for EXEC-ID to STATUS.
 
 EXEC-ID is UUID string.
-STATUS is symbol: queued, executing, completed, error, cancelled, completed-with-errors.
+STATUS is symbol: queued, executing, completed, error, cancelled,
+completed-with-errors.
 
 Stores in `org-babel-duckdb--exec-status' for queue display.
 
-Called by process filter when execution starts and by completion-handler
-when execution completes.
+Called by process filter when execution starts and by completion
+handler when execution completes.
 
 Also see `org-babel-duckdb--get-exec-status'."
   (puthash exec-id status org-babel-duckdb--exec-status))
@@ -813,10 +815,10 @@ Also see `org-babel-duckdb--update-exec-status' for status values."
 
 Updates `org-babel-duckdb--queue-buffer' with latest queue status.
 Shows execution states: queued, executing, completed, error, cancelled,
-completed-with-errors, and kill-session for blocks with :kill-on-completion.
+completed-with-errors, and kill-session for :kill-on-completion blocks.
 
-Displays [marked for termination] in session header when termination pending.
-Displays (kill-session) suffix on specific execution that will terminate session.
+Displays [marked for termination] in session header when pending.
+Displays (kill-session) suffix on execution that will terminate session.
 If termination execution is cancelled, removes both indicators.
 
 Called by `org-babel-duckdb--queue-refresh-timer' every 0.5 seconds.
@@ -824,7 +826,7 @@ Called by `org-babel-duckdb--queue-refresh-timer' every 0.5 seconds.
 Stops refresh timer and cleans up when all queues are empty.
 For auto-display mode, also closes buffer when queue empties.
 
-Uses `org-babel-duckdb--collect-queue-entries' to fetch all queued items.
+Uses `org-babel-duckdb--collect-queue-entries' to fetch queued items.
 Uses `org-babel-duckdb--format-status-string'.
 
 Also see `org-babel-duckdb-show-queue' for buffer creation and
@@ -910,12 +912,13 @@ Also see `org-babel-duckdb-show-queue' for monitor startup and
 
 ;;;###autoload
 (defun org-babel-duckdb-show-queue (&optional session)
-  "Display pending async executions for SESSION with live updates.
+  "Display pending async executions for SESSION.
 
 When SESSION is nil, shows queues for all sessions.
 
 Creates live-updating buffer that refreshes every 0.5 seconds.
-Buffer shows execution states: queued, executing, completed, error, cancelled, completed-with-errors.
+Buffer shows execution states: queued, executing, completed, error,
+cancelled, completed-with-errors.
 
 Display position controlled by `org-babel-duckdb-queue-position':
   bottom - Bottom side window (25% height)
@@ -938,9 +941,6 @@ Status values:
 - No label - Queued, waiting to execute
 
 Auto-stops when all queues complete.
-Press 'q' to close buffer and stop monitoring.
-Press 'g' to force refresh.
-
 Information from `org-babel-duckdb--session-queues' and
 `org-babel-duckdb--exec-status'.
 
@@ -1324,10 +1324,11 @@ Used by `org-babel-duckdb-execute-sync' and
 (defun org-babel-duckdb-read-file-lines (file max-lines)
   "Read up to MAX-LINES from FILE, return (content . truncated-p).
 
-Efficiently handles large files without loading entire contents into memory.
+Efficiently handles large files without loading entire contents.
 MAX-LINES of nil or 0 means read entire file.
 
-Used by `org-babel-duckdb-execute-sync' and `org-babel-duckdb--make-completion-handler'
+Used by `org-babel-duckdb-execute-sync' and
+`org-babel-duckdb--make-completion-handler'
 to apply truncation from `org-babel-duckdb-max-rows'."
   (if (or (not max-lines) (<= max-lines 0))
       (cons (with-temp-buffer
@@ -1773,7 +1774,7 @@ marker detected."
 (defun org-babel-duckdb--extract-exec-id-from-results ()
   "Extract exec-id from results block at point.
 
-Searches for pattern 'Execution ID: <UUID>' in results block below
+Searches for pattern `Execution ID: <UUID>' in results block below
 current source block.
 
 Returns exec-id string or nil if not found.
@@ -2058,7 +2059,7 @@ To view remaining sessions, use `org-babel-duckdb-display-sessions'."
 
 Shows session name, database connection, status, and buffer name.
 
-Database connection retrieved from buffer-local `org-babel-duckdb-session-db-file'.
+Database connection from buffer-local `org-babel-duckdb-session-db-file'.
 MotherDuck connections display as \"md:DATABASE\" without exposing token.
 
 Uses `org-babel-duckdb-list-sessions' to enumerate sessions.
@@ -2282,14 +2283,14 @@ placeholder parsing."
 (defun org-babel-execute:duckdb (body params)
   "Execute DuckDB SQL BODY with PARAMS.
 
-Main entry point called by Org Babel when executing duckdb source blocks.
+Main entry point called by Org Babel when executing duckdb blocks.
 
 BODY is SQL code as string.
 PARAMS is alist of header arguments (see `org-babel-header-args:duckdb').
 
 Returns output string for sync execution, placeholder for async.
 
-Validates MotherDuck parameters via `org-babel-duckdb--validate-motherduck-params'.
+Validates MotherDuck params via `org-babel-duckdb--validate-motherduck-params'.
 Validates async requirements (must have session).
 Validates :kill-on-completion requires :async yes.
 Validates session accepts executions when :kill-on-completion specified.
@@ -2301,7 +2302,7 @@ Dispatches to `org-babel-duckdb-execute-sync' or
 Fires `org-babel-duckdb-execution-started-functions' hook at start.
 
 Block tracking is optional via org-duckdb-blocks.el.
-When disabled, only async executions are tracked minimally via
+When disabled, only async executions tracked minimally via
 `org-babel-duckdb--pending-async'."
   (message "[ob-duckdb] Starting execution")
 
