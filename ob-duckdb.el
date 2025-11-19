@@ -1,4 +1,4 @@
-;;; ob-duckdb.el --- Org Babel functions for DuckDB SQL -*- lexical-binding: t; -*-
+;;; ob-duckdb.el --- Org Babel integration for DuckDB CLI -*- lexical-binding: t; -*-
 
 ;; Author: gggion
 ;; Maintainer: gggion <gggion123@gmail.com>
