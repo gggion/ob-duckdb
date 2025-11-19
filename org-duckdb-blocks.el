@@ -129,18 +129,18 @@ Cleaned by `org-duckdb-blocks-clear'.")
 
 Keys are execution ID strings (UUIDs).
 Values are plists with:
-  :block-id    - ID of the executed block (see `org-duckdb-blocks-registry')
-  :begin       - Block position at execution time
-  :time        - Timestamp of execution
-  :content     - SQL content executed (snapshot)
-  :parameters  - Header parameters string
-  :header      - Parsed header arguments
-  :switches    - Block switches
-  :line-count  - Number of lines in content
-  :name        - Block name (if any)
-  :status      - Execution status (see `org-duckdb-blocks-execution-status')
-  :process     - Process object (if running, see `org-duckdb-blocks-store-process')
-  :error-info  - Error details (if status is 'error)
+  :block-id   - ID of executed block (see `org-duckdb-blocks-registry')
+  :begin      - Block position at execution time
+  :time       - Timestamp of execution
+  :content    - SQL content executed (snapshot)
+  :parameters - Header parameters string
+  :header     - Parsed header arguments
+  :switches   - Block switches
+  :line-count - Number of lines in content
+  :name       - Block name (if any)
+  :status     - Execution status (see `org-duckdb-blocks-execution-status')
+  :process    - Process object (if running, `org-duckdb-blocks-store-process')
+  :error-info - Error details (if status is \='error)
 
 Populated by `org-duckdb-blocks-register-execution'.
 Queried by `org-duckdb-blocks-execution-info' and navigation commands.
@@ -186,7 +186,8 @@ Change requires calling `org-duckdb-blocks-clear' to resize buffer.")
   "Execution status tracking by execution ID.
 
 Keys are execution ID strings.
-Values are status symbols: running, completed, cancelled, error, warning, completed-with-errors.
+Values are status symbols: running, completed, cancelled, error,
+warning, completed-with-errors.
 
 Updated by `org-duckdb-blocks-update-execution-status'.
 Queried by `org-duckdb-blocks-get-execution-status' and
@@ -246,10 +247,11 @@ and `org-duckdb-blocks-show-execution-status'."
   "Update execution STATUS for EXEC-ID with optional ERROR-INFO.
 
 EXEC-ID is normalized before lookup.
-STATUS is a symbol: running, completed, cancelled, error, warning, completed-with-errors.
-ERROR-INFO is error description string (only for 'error status).
+STATUS is symbol: running, completed, cancelled, error, warning,
+completed-with-errors.
+ERROR-INFO is error description string (only for \='error status).
 
-Updates both `org-duckdb-blocks-execution-status' and the :status
+Updates both `org-duckdb-blocks-execution-status' and :status
 field in `org-duckdb-blocks-executions'.
 
 Called by ob-duckdb.el hooks during execution lifecycle.
@@ -326,9 +328,9 @@ Returns process object or nil."
     (plist-get exec-info :process)))
 
 (defun org-duckdb-blocks-get-running-executions ()
-  "Return list of execution IDs currently in 'running status.
+  "Return list of execution IDs currently in \='running status.
 
-Scans `org-duckdb-blocks-executions' for executions with :status 'running.
+Scans `org-duckdb-blocks-executions' for executions with :status \='running.
 
 Used by `org-babel-duckdb-cancel-execution' for completion candidates.
 
@@ -916,7 +918,8 @@ Also see `org-duckdb-blocks-navigate-recent' for interactive navigation."
 (defun org-duckdb-blocks-show-execution-status ()
   "Show status of recent executions with their states.
 
-Displays status for recent executions from `org-duckdb-blocks-get-recent-history'.
+Displays status for recent executions from
+`org-duckdb-blocks-get-recent-history'.
 Status values from `org-duckdb-blocks-execution-status':
 - running: Query executing
 - completed: Finished successfully
@@ -925,9 +928,9 @@ Status values from `org-duckdb-blocks-execution-status':
 - warning: Completed with warnings
 - completed-with-errors: Completed with errors
 
-Also shows error info if status is `error.
+Also shows error info if status is \='error.
 
-Also see `org-duckdb-blocks-update-execution-status' for how status is set."
+See `org-duckdb-blocks-update-execution-status' for how status is set."
   (interactive)
   (with-help-window "*DuckDB Execution Status*"
     (princ "DuckDB Execution Status\n")
