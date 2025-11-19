@@ -2,7 +2,7 @@
 
 ;; Author: gggion
 ;; Version: 2.0.0
-;; Package-Requires: ((emacs "28.1") (org "9.5") (ob-duckdb "2.0.0"))
+;; Package-Requires: ((emacs "28.1") (org "9.5"))
 ;; Keywords: org, duckdb, data
 ;; URL: https://github.com/gggion/ob-duckdb
 
