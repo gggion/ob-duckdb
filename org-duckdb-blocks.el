@@ -113,7 +113,7 @@ Used by all functions that handle block or execution IDs."
 Keys are block ID strings (UUIDs).
 Values are plists with:
   :begin     - Position of block start
-  :end       - Position of block end  
+  :end       - Position of block end
   :file      - File containing the block
   :buffer    - Buffer name containing the block
   :content   - Current block SQL content
@@ -350,7 +350,7 @@ Also see `org-duckdb-blocks-update-execution-status'."
 Storage method depends on `org-duckdb-blocks-visible-properties':
 
 When nil (default):
-  Stores IDs as invisible text properties on block start line.
+  Stores IDs as invisible text properties on #+begin_src line.
   Properties: org-duckdb-block-id, org-duckdb-exec-id.
 
 When non-nil:
@@ -360,26 +360,33 @@ BEGIN is marker or position of source block start.
 
 Only called when `org-duckdb-blocks-enable-tracking' is non-nil.
 
-Text properties move with text during edits and don't clutter source.
-Visible properties enable inspection but pollute document.
+Text properties are stored on the #+begin_src line specifically,
+not on #+NAME: or #+HEADER: lines, since those may change position
+or be added/removed. The #+begin_src line is the stable anchor.
 
 Also see `org-duckdb-blocks-get-block-id' for retrieval and
 `org-duckdb-blocks-update-properties' for legacy visible storage."
   (save-excursion
     (goto-char begin)
+
     (if org-duckdb-blocks-visible-properties
         ;; Visible property lines
         (org-duckdb-blocks-update-properties block-id exec-id begin)
-      
-      ;; Invisible text properties
-      (let ((line-start (line-beginning-position))
-            (line-end (line-end-position)))
-        (put-text-property line-start line-end 
-                           'org-duckdb-block-id 
-                           (org-duckdb-blocks-normalize-id block-id))
-        (put-text-property line-start line-end 
-                           'org-duckdb-exec-id 
-                           (org-duckdb-blocks-normalize-id exec-id))))))
+
+      ;; Invisible text properties - find #+begin_src line
+      (let ((src-line-start nil))
+        ;; Search forward for #+begin_src from BEGIN
+        (when (re-search-forward "^#\\+begin_src duckdb"
+                                (save-excursion (forward-line 10) (point))
+                                t)
+          (setq src-line-start (line-beginning-position))
+          (let ((src-line-end (line-end-position)))
+            (put-text-property src-line-start src-line-end
+                              'org-duckdb-block-id
+                              (org-duckdb-blocks-normalize-id block-id))
+            (put-text-property src-line-start src-line-end
+                              'org-duckdb-exec-id
+                              (org-duckdb-blocks-normalize-id exec-id))))))))
 
 (defun org-duckdb-blocks-update-properties (block-id exec-id begin)
   "Update #+PROPERTY: lines for BLOCK-ID and EXEC-ID before block at BEGIN.
@@ -428,10 +435,11 @@ Read by `org-duckdb-blocks-get-block-id'."
 
 Retrieval strategy depends on storage method:
 
-1. Check invisible text properties (fast, default)
+1. Search forward from BEGIN for #+begin_src line and check its
+   text properties (fast, default)
 2. Search backward for visible #+PROPERTY: ID line (legacy)
 
-BEGIN is position of source block start.
+BEGIN is position of source block start (from org-element).
 
 Returns normalized ID string or nil.
 
@@ -442,13 +450,18 @@ Also see `org-duckdb-blocks--store-id' for storage and
   (save-excursion
     (goto-char begin)
     (or
-     ;; Fast path: text property
-     (get-text-property (line-beginning-position) 'org-duckdb-block-id)
-     
+     ;; Fast path: text property on #+begin_src line
+     (when (re-search-forward "^#\\+begin_src duckdb"
+                             (save-excursion (forward-line 10) (point))
+                             t)
+       (get-text-property (line-beginning-position) 'org-duckdb-block-id))
+
      ;; Fallback: visible property line
-     (when (re-search-backward "^#\\+PROPERTY: ID \\([a-f0-9-]+\\)"
-                               (max (- begin 200) (point-min)) t)
-       (org-duckdb-blocks-normalize-id (match-string 1))))))
+     (progn
+       (goto-char begin)
+       (when (re-search-backward "^#\\+PROPERTY: ID \\([a-f0-9-]+\\)"
+                                 (max (- begin 200) (point-min)) t)
+         (org-duckdb-blocks-normalize-id (match-string 1)))))))
 
 ;;;; Block Position Tracking
 
@@ -459,8 +472,11 @@ Updates positions for all tracked blocks in current buffer and removes
 stale entries. This critical function ensures registry accuracy as blocks
 are added, removed, or edited.
 
+Handles both visible #+PROPERTY: ID lines and invisible text properties
+based on `org-duckdb-blocks-visible-properties'.
+
 Procedure:
-1. Scan buffer for #+PROPERTY: ID markers
+1. Scan buffer for blocks with IDs (property lines or text properties)
 2. Find associated source blocks
 3. Update coordinates in `org-duckdb-blocks-registry'
 4. Remove registry entries for blocks no longer in buffer
@@ -478,41 +494,75 @@ Returns list of block IDs currently in buffer."
     ;; First pass: find blocks with IDs in current buffer
     (save-excursion
       (goto-char (point-min))
-      (while (re-search-forward "^#\\+PROPERTY: ID \\([a-f0-9-]+\\)" nil t)
-        (let ((block-id (org-duckdb-blocks-normalize-id (match-string 1))))
-          (push block-id current-buffer-blocks)
 
-          ;; Find associated source block
-          (when (re-search-forward "^#\\+begin_src duckdb" nil t)
-            (let* ((element (org-element-at-point))
-                   (begin (org-element-property :begin element))
-                   (end (org-element-property :end element)))
+      (if org-duckdb-blocks-visible-properties
+          ;; Scan for visible #+PROPERTY: ID lines
+          (while (re-search-forward "^#\\+PROPERTY: ID \\([a-f0-9-]+\\)" nil t)
+            (let ((block-id (org-duckdb-blocks-normalize-id (match-string 1))))
+              (push block-id current-buffer-blocks)
 
-              (when (and begin end)
-                (puthash (cons begin end) block-id found-blocks)
+              ;; Find associated source block
+              (when (re-search-forward "^#\\+begin_src duckdb" nil t)
+                (let* ((element (org-element-at-point))
+                       (begin (org-element-property :begin element))
+                       (end (org-element-property :end element)))
 
-                ;; Update registry
-                (let* ((contents-begin (org-element-property :contents-begin element))
-                       (contents-end (org-element-property :contents-end element))
-                       (content (if (and contents-begin contents-end)
-                                    (buffer-substring-no-properties contents-begin contents-end)
-                                  ""))
-                       (info (gethash block-id org-duckdb-blocks-registry)))
-                  (if info
-                      (puthash block-id
-                               (list :begin begin
-                                     :end end
-                                     :file file
-                                     :buffer buffer
-                                     :content content)
-                               org-duckdb-blocks-registry)
+                  (when (and begin end)
+                    (puthash (cons begin end) block-id found-blocks)
+
+                    ;; Update registry
+                    (let* ((contents-begin (org-element-property :contents-begin element))
+                           (contents-end (org-element-property :contents-end element))
+                           (content (if (and contents-begin contents-end)
+                                        (buffer-substring-no-properties contents-begin contents-end)
+                                      ""))
+                           (info (gethash block-id org-duckdb-blocks-registry)))
+                      (if info
+                          (puthash block-id
+                                   (list :begin begin
+                                         :end end
+                                         :file file
+                                         :buffer buffer
+                                         :content content)
+                                   org-duckdb-blocks-registry)
+                        (puthash block-id
+                                 (list :begin begin
+                                       :end end
+                                       :file file
+                                       :buffer buffer
+                                       :content content)
+                                 org-duckdb-blocks-registry))))))))
+
+        ;; Scan for invisible text properties
+        (while (not (eobp))
+          (when-let ((block-id (get-text-property (point) 'org-duckdb-block-id)))
+            (setq block-id (org-duckdb-blocks-normalize-id block-id))
+            (push block-id current-buffer-blocks)
+
+            ;; Check if we're at a source block
+            (when (looking-at "^#\\+begin_src duckdb")
+              (let* ((element (org-element-at-point))
+                     (begin (org-element-property :begin element))
+                     (end (org-element-property :end element)))
+
+                (when (and begin end)
+                  (puthash (cons begin end) block-id found-blocks)
+
+                  ;; Update registry
+                  (let* ((contents-begin (org-element-property :contents-begin element))
+                         (contents-end (org-element-property :contents-end element))
+                         (content (if (and contents-begin contents-end)
+                                      (buffer-substring-no-properties contents-begin contents-end)
+                                    "")))
                     (puthash block-id
                              (list :begin begin
                                    :end end
                                    :file file
                                    :buffer buffer
                                    :content content)
-                             org-duckdb-blocks-registry)))))))))
+                             org-duckdb-blocks-registry))))))
+
+          (forward-line 1))))
 
     ;; Second pass: remove stale registry entries
     (let ((blocks-to-remove nil))
@@ -586,11 +636,11 @@ For interactive use, see `org-duckdb-blocks-list' and
 
           ;; Find existing ID
           (let* ((existing-id (org-duckdb-blocks-get-block-id begin))
-                 (block-id (org-duckdb-blocks-normalize-id 
+                 (block-id (org-duckdb-blocks-normalize-id
                             (or existing-id (org-id-uuid))))
                  (exec-id (org-duckdb-blocks-normalize-id (org-id-uuid)))
                  (timestamp (current-time)))
-            
+
             ;; Store IDs
             (org-duckdb-blocks--store-id block-id exec-id begin)
 
@@ -621,7 +671,7 @@ For interactive use, see `org-duckdb-blocks-list' and
             (message "[duckdb-blocks] Registered block %s execution %s"
                      (substring block-id 0 8)
                      (substring exec-id 0 8))
-            
+
             (list :block-id block-id :exec-id exec-id)))))))
 
 ;;;; Hook Handlers
@@ -660,13 +710,38 @@ Installed by `org-duckdb-blocks-setup' on
   (org-duckdb-blocks-update-execution-status exec-id status error-info))
 
 ;;;; Navigation Commands
+(defun org-duckdb-blocks--find-block-by-id (block-id)
+  "Find source block with BLOCK-ID in current buffer.
+
+Scans buffer for #+begin_src duckdb lines with text property
+org-duckdb-block-id matching BLOCK-ID.
+
+Returns position of #+begin_src line, or nil if not found.
+
+Used by navigation commands to locate blocks after document edits."
+  (let ((block-id (org-duckdb-blocks-normalize-id block-id))
+        (found-pos nil))
+    (save-excursion
+      (goto-char (point-min))
+      (while (and (not found-pos)
+                  (re-search-forward "^#\\+begin_src duckdb" nil t))
+        (let ((line-start (line-beginning-position)))
+          (when (equal (org-duckdb-blocks-normalize-id
+                       (get-text-property line-start 'org-duckdb-block-id))
+                      block-id)
+            (setq found-pos line-start)))))
+    found-pos))
 
 ;;;###autoload
 (defun org-duckdb-blocks-goto-block (id)
   "Navigate to DuckDB source block with ID.
 
-Finds block in `org-duckdb-blocks-registry', opens its file if needed,
-and positions cursor at block start.
+Finds block by scanning current buffer for text property
+org-duckdb-block-id. Opens file if needed and positions cursor
+at block start.
+
+Text properties move with text during edits, so this reliably
+locates blocks even after document modifications.
 
 When interactive, provides completion for all known block IDs.
 
@@ -676,16 +751,45 @@ and `org-duckdb-blocks-navigate-recent' for recent execution browser."
    (list (let ((choice (completing-read "Block ID: "
                                        (hash-table-keys org-duckdb-blocks-registry))))
            (org-duckdb-blocks-normalize-id choice))))
-  (when-let* ((info (gethash (org-duckdb-blocks-normalize-id id) org-duckdb-blocks-registry)))
+
+  (when-let* ((info (gethash (org-duckdb-blocks-normalize-id id)
+                            org-duckdb-blocks-registry))
+              (buffer-name (plist-get info :buffer)))
+
+    ;; Switch to buffer
     (cond
      ((and (plist-get info :file) (file-exists-p (plist-get info :file)))
       (find-file (plist-get info :file)))
-     ((and (plist-get info :buffer) (get-buffer (plist-get info :buffer)))
-      (switch-to-buffer (plist-get info :buffer)))
-     (t (message "[duckdb-blocks] Source not found")))
+     ((get-buffer buffer-name)
+      (switch-to-buffer buffer-name))
+     (t
+      (user-error "[duckdb-blocks] Source buffer %s not found" buffer-name)))
 
-    (goto-char (plist-get info :begin))
-    (recenter-top-bottom)))
+    ;; Find block by scanning for text property
+    (if-let ((pos (org-duckdb-blocks--find-block-by-id id)))
+        (progn
+          (goto-char pos)
+          (recenter-top-bottom)
+
+          ;; Update registry with current position
+          (let* ((element (org-element-at-point))
+                 (begin (org-element-property :begin element))
+                 (end (org-element-property :end element))
+                 (contents-begin (org-element-property :contents-begin element))
+                 (contents-end (org-element-property :contents-end element))
+                 (content (if (and contents-begin contents-end)
+                              (buffer-substring-no-properties contents-begin contents-end)
+                            "")))
+            (puthash (org-duckdb-blocks-normalize-id id)
+                     (list :begin begin
+                           :end end
+                           :file (buffer-file-name)
+                           :buffer (buffer-name)
+                           :content content)
+                     org-duckdb-blocks-registry)))
+
+      (user-error "[duckdb-blocks] Block %s not found in buffer %s"
+                  (substring id 0 8) buffer-name))))
 
 ;;;###autoload
 (defun org-duckdb-blocks-goto-execution (exec-id)
@@ -702,6 +806,7 @@ executions with readable labels."
    (list (let ((choice (completing-read "Execution ID: "
                                        (hash-table-keys org-duckdb-blocks-executions))))
            (org-duckdb-blocks-normalize-id choice))))
+
   (when-let* ((exec-info (gethash (org-duckdb-blocks-normalize-id exec-id)
                                  org-duckdb-blocks-executions))
               (block-id (plist-get exec-info :block-id)))
@@ -993,22 +1098,22 @@ Main entry point for using this package."
                        org-babel-duckdb-execution-started-functions)
           (add-hook 'org-babel-duckdb-execution-started-functions
                     #'org-duckdb-blocks--on-execution-started))
-        
+
         (unless (member 'org-duckdb-blocks--on-process-started
                        org-babel-duckdb-async-process-started-functions)
           (add-hook 'org-babel-duckdb-async-process-started-functions
                     #'org-duckdb-blocks--on-process-started))
-        
+
         (unless (member 'org-duckdb-blocks--on-execution-completed
                        org-babel-duckdb-execution-completed-functions)
           (add-hook 'org-babel-duckdb-execution-completed-functions
                     #'org-duckdb-blocks--on-execution-completed))
-        
+
         ;; Exclude tracking properties from yank
         (dolist (prop '(org-duckdb-block-id org-duckdb-exec-id))
           (unless (memq prop yank-excluded-properties)
             (push prop yank-excluded-properties)))
-        
+
         (message "DuckDB block tracking activated"))
     (message "DuckDB block tracking disabled (set org-duckdb-blocks-enable-tracking to enable)")))
 
