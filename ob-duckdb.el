@@ -2,7 +2,7 @@
 
 ;; Author: gggion
 ;; Maintainer: gggion <gggion123@gmail.com>
-;; Version: 2.0.0
+;; Version: 2.1.0
 ;; Package-Requires: ((emacs "28.1") (org "9.5"))
 ;; Keywords: languages, org, babel, duckdb, sql, data, analytics
 ;; URL: https://github.com/gggion/ob-duckdb
