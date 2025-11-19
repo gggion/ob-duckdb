@@ -683,6 +683,17 @@ For interactive use, see `org-duckdb-blocks-list' and
 
 ;;;; Hook Handlers
 
+(defun org-duckdb-blocks--on-status-changed (exec-id status)
+  "Hook handler for status changes.
+
+EXEC-ID and STATUS are from hook.
+
+Updates status via `org-duckdb-blocks-update-execution-status'.
+
+Installed by `org-duckdb-blocks-setup' on
+`org-babel-duckdb-status-changed-functions'."
+  (org-duckdb-blocks-update-execution-status exec-id status nil))
+
 (defun org-duckdb-blocks--on-execution-started (exec-id session body params is-async-p element)
   "Hook handler for execution start.
 
@@ -1057,7 +1068,8 @@ See `org-duckdb-blocks-update-execution-status' for how status is set."
                  (block-id (aref entry 1))
                  (timestamp (aref entry 2))
                  (exec-info (gethash exec-id org-duckdb-blocks-executions))
-                 (status (plist-get exec-info :status))
+                 ;; Get status from execution-status hash table, not from exec-info plist
+                 (status (org-duckdb-blocks-get-execution-status exec-id))
                  (error-info (plist-get exec-info :error-info))
                  (time-str (format-time-string "%H:%M:%S" timestamp)))
             (princ (format "  [%s] %s: %s\n"
@@ -1082,6 +1094,7 @@ When enabled, adds hook handlers to observe ob-duckdb.el execution:
 - `org-babel-duckdb-execution-started-functions'
 - `org-babel-duckdb-async-process-started-functions'
 - `org-babel-duckdb-execution-completed-functions'
+- `org-babel-duckdb-status-changed-functions'
 
 Also excludes tracking properties from yank to prevent ID pollution
 when copying source blocks.
@@ -1115,6 +1128,11 @@ Main entry point for using this package."
                        org-babel-duckdb-execution-completed-functions)
           (add-hook 'org-babel-duckdb-execution-completed-functions
                     #'org-duckdb-blocks--on-execution-completed))
+
+        (unless (member 'org-duckdb-blocks--on-status-changed
+                       org-babel-duckdb-status-changed-functions)
+          (add-hook 'org-babel-duckdb-status-changed-functions
+                    #'org-duckdb-blocks--on-status-changed))
 
         ;; Exclude tracking properties from yank
         (dolist (prop '(org-duckdb-block-id org-duckdb-exec-id))

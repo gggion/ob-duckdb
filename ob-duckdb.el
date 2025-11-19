@@ -281,6 +281,26 @@ Also see `org-babel-duckdb-queue-display' for display triggering."
   :package-version '(ob-duckdb . "2.0.0"))
 
 ;;;; Hooks for Extension Points
+(defvar org-babel-duckdb-status-changed-functions nil
+  "Abnormal hook run when execution status changes.
+
+Each function is called with arguments:
+  (EXEC-ID STATUS)
+
+Where:
+  EXEC-ID - UUID string for this execution
+  STATUS  - Symbol: queued, executing, completed, error, cancelled,
+            completed-with-errors
+
+Called whenever `org-babel-duckdb--update-exec-status' updates status,
+providing visibility into all status transitions throughout execution
+lifecycle.
+
+Used by org-duckdb-blocks.el to maintain synchronized status tracking.
+
+Also see `org-babel-duckdb-execution-started-functions',
+`org-babel-duckdb-async-process-started-functions', and
+`org-babel-duckdb-execution-completed-functions'.")
 
 (defvar org-babel-duckdb-execution-started-functions nil
   "Abnormal hook run when DuckDB execution starts (sync or async).
@@ -536,16 +556,16 @@ Called by `org-babel-duckdb-initiate-session' and
 Also see `org-babel-duckdb--validate-motherduck-params' for validation."
   (let ((md-db (cdr (assq :md params)))
         (local-db (cdr (assq :db params))))
-    
+
     (cond
      ;; MotherDuck connection
      (md-db
       (let ((token (org-babel-duckdb--resolve-motherduck-token params)))
         (format "md:%s?motherduck_token=%s" md-db token)))
-     
+
      ;; Local database file
      (local-db local-db)
-     
+
      ;; In-memory database
      (t ""))))
 
@@ -794,11 +814,15 @@ completed-with-errors.
 
 Stores in `org-babel-duckdb--exec-status' for queue display.
 
+Fires `org-babel-duckdb-status-changed-functions' hook to notify
+observers of status transitions.
+
 Called by process filter when execution starts and by completion
 handler when execution completes.
 
 Also see `org-babel-duckdb--get-exec-status'."
-  (puthash exec-id status org-babel-duckdb--exec-status))
+  (puthash exec-id status org-babel-duckdb--exec-status)
+  (run-hook-with-args 'org-babel-duckdb-status-changed-functions exec-id status))
 
 (defun org-babel-duckdb--get-exec-status (exec-id)
   "Get current status for EXEC-ID.
@@ -2047,10 +2071,10 @@ To view remaining sessions, use `org-babel-duckdb-display-sessions'."
               (delete-process proc))))
         (kill-buffer buffer))
       (remhash session-name org-babel-duckdb-sessions)
-      
+
       ;; Clean up queue structure to allow session name reuse
       (remhash session-name org-babel-duckdb--session-queues)
-      
+
       (message "Session %s deleted" session-name))))
 
 ;;;###autoload
