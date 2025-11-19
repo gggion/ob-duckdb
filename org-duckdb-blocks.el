@@ -1,20 +1,18 @@
 ;;; org-duckdb-blocks.el --- Track DuckDB block executions in Org files -*- lexical-binding: t; -*-
 
 ;; Author: gggion
-;; Version: 2.0.0
 ;; Package-Requires: ((emacs "28.1") (org "9.5"))
 ;; Keywords: org, duckdb, data
 ;; URL: https://github.com/gggion/ob-duckdb
 
 ;;; Commentary:
-
-;; This package tracks DuckDB source blocks in Org mode documents, providing
-;; execution history, block identification, and navigation functionality.
 ;;
-;; The tracking system solves a critical problem for asynchronous execution:
-;; routing results back to the correct source block even after the document
-;; has been edited. It also provides useful execution history and navigation
-;; independent of async execution.
+;; This ob-duckdb addon tracks DuckDB source blocks in Org mode documents,
+;; providing, execution history, block identification, and navigation
+;; functionality.
+;;
+;; The tracking system provides useful execution history and navigation
+;; for debugging purposes.
 ;;
 ;; Basic usage:
 ;;
