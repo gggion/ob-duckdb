@@ -1,4 +1,4 @@
-;;; org-duckdb-blocks.el --- Track DuckDB block executions in Org files -*- lexical-binding: t; -*-
+;; org-duckdb-blocks.el --- Track DuckDB block executions in Org files -*- lexical-binding: t; -*-
 
 ;; Author: gggion
 ;; Package-Requires: ((emacs "28.1") (org "9.5"))
@@ -971,6 +971,9 @@ When enabled, adds hook handlers to observe ob-duckdb.el execution:
 - `org-babel-duckdb-async-process-started-functions'
 - `org-babel-duckdb-execution-completed-functions'
 
+Also excludes tracking properties from yank to prevent ID pollution
+when copying source blocks.
+
 Safe to call multiple times (checks if hooks already present).
 
 When disabled, block tracking remains inactive and ob-duckdb.el uses
@@ -1000,6 +1003,11 @@ Main entry point for using this package."
                        org-babel-duckdb-execution-completed-functions)
           (add-hook 'org-babel-duckdb-execution-completed-functions
                     #'org-duckdb-blocks--on-execution-completed))
+        
+        ;; Exclude tracking properties from yank
+        (dolist (prop '(org-duckdb-block-id org-duckdb-exec-id))
+          (unless (memq prop yank-excluded-properties)
+            (push prop yank-excluded-properties)))
         
         (message "DuckDB block tracking activated"))
     (message "DuckDB block tracking disabled (set org-duckdb-blocks-enable-tracking to enable)")))
