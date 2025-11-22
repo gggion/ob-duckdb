@@ -625,7 +625,7 @@ Used by `org-babel-duckdb--refresh-queue-display' and
 
 SESSION is session name string.
 
-Retrieves first pending exec-id from queue, updates status to \='executing,
+Retrieves first pending exec-id from queue, updates status to \\='executing,
 and sends queued commands to session process.
 
 Called by `org-babel-duckdb--enqueue-execution' for first execution and
@@ -657,7 +657,7 @@ Also see `org-babel-duckdb--session-output-filter' for completion detection."
 SESSION is session name string.
 
 Shows queue when:
-- `org-babel-duckdb-queue-display' is \='auto
+- `org-babel-duckdb-queue-display' is \\='auto
 - Queue has 2+ pending executions
 - Queue monitor not already visible
 
@@ -689,9 +689,9 @@ Installs cooperative filter on first execution via
 
 Sends commands immediately if queue was empty, otherwise queues for later.
 
-Updates status to \='executing for first execution, \='queued for others.
+Updates status to \\='executing for first execution, \\='queued for others.
 
-Auto-shows queue monitor if `org-babel-duckdb-queue-display' is \='auto.
+Auto-shows queue monitor if `org-babel-duckdb-queue-display' is \\='auto.
 
 When KILL-ON-COMPLETION is non-nil, sets :termination-pending flag and
 stores EXEC-ID in :termination-exec-id to prevent further executions from

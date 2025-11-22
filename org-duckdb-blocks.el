@@ -140,7 +140,7 @@ Values are plists with:
   :name       - Block name (if any)
   :status     - Execution status (see `org-duckdb-blocks-execution-status')
   :process    - Process object (if running, `org-duckdb-blocks-store-process')
-  :error-info - Error details (if status is \='error)
+  :error-info - Error details (if status is \\='error)
 
 Populated by `org-duckdb-blocks-register-execution'.
 Queried by `org-duckdb-blocks-execution-info' and navigation commands.
@@ -249,7 +249,7 @@ and `org-duckdb-blocks-show-execution-status'."
 EXEC-ID is normalized before lookup.
 STATUS is symbol: running, completed, cancelled, error, warning,
 completed-with-errors.
-ERROR-INFO is error description string (only for \='error status).
+ERROR-INFO is error description string (only for \\='error status).
 
 Updates both `org-duckdb-blocks-execution-status' and :status
 field in `org-duckdb-blocks-executions'.
@@ -328,9 +328,9 @@ Returns process object or nil."
     (plist-get exec-info :process)))
 
 (defun org-duckdb-blocks-get-running-executions ()
-  "Return list of execution IDs currently in \='running status.
+  "Return list of execution IDs currently in \\='running status.
 
-Scans `org-duckdb-blocks-executions' for executions with :status \='running.
+Scans `org-duckdb-blocks-executions' for executions with :status \\='running.
 
 Used by `org-babel-duckdb-cancel-execution' for completion candidates.
 
@@ -1051,7 +1051,7 @@ Status values from `org-duckdb-blocks-execution-status':
 - warning: Completed with warnings
 - completed-with-errors: Completed with errors
 
-Also shows error info if status is \='error.
+Also shows error info if status is \\='error.
 
 See `org-duckdb-blocks-update-execution-status' for how status is set."
   (interactive)
