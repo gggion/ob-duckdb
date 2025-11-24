@@ -66,6 +66,13 @@
 (require 'org-macs)
 (require 'org-id)
 
+
+;; Silence byte-compiler warnings about hooks defined in ob-duckdb.el
+(defvar org-babel-duckdb-execution-started-functions)
+(defvar org-babel-duckdb-async-process-started-functions)
+(defvar org-babel-duckdb-execution-completed-functions)
+(defvar org-babel-duckdb-status-changed-functions)
+
 ;;;; Customizable vars
 (defcustom ob-duckdb-blocks-enable-tracking nil
   "Enable execution history and block tracking for debugging.
