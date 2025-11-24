@@ -1,7 +1,6 @@
 ;; ob-duckdb-blocks.el --- Track DuckDB block executions in Org files -*- lexical-binding: t; -*-
 
 ;; Author: gggion
-;; Package-Requires: ((emacs "28.1") (org "9.5"))
 ;; Keywords: org, duckdb, data
 ;; URL: https://github.com/gggion/ob-duckdb
 
