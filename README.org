@@ -323,8 +323,8 @@ Clone the repository and add to your load path:
 :END:
 #+begin_quote
 [!IMPORTANT]
-Previously, async capabilities depended on ~org-duckdb-blocks.el~, now on 2.0 this
-is no longer the case. ~org-duckdb-blocks~ is a fully optional logging/tracking
+Previously, async capabilities depended on ~ob-duckdb-blocks.el~, now on 2.0 this
+is no longer the case. ~ob-duckdb-blocks~ is a fully optional logging/tracking
 addon, mostly useful for debugging or if you want enhanced tracking
 capabilities. Now, all ob-duckdb functionalities are fully self-contained, these
 configurations reflect that.
