@@ -255,12 +255,11 @@ and `ob-duckdb-blocks-show-execution-status'."
                         (1- ob-duckdb-blocks-history-count)
                       (mod (+ ob-duckdb-blocks-history-index
                              (- ob-duckdb-blocks-history-capacity 1))
-                           ob-duckdb-blocks-history-capacity)))
-         result)
-    (dotimes (i count result)
-      (let* ((idx (mod (- start-idx i) ob-duckdb-blocks-history-capacity))
-             (entry (aref ob-duckdb-blocks-history-vector idx)))
-        (when entry (push entry result))))))
+                           ob-duckdb-blocks-history-capacity))))
+    (cl-loop for i below count
+             for idx = (mod (- start-idx i) ob-duckdb-blocks-history-capacity)
+             for entry = (aref ob-duckdb-blocks-history-vector idx)
+             when entry collect entry)))
 
 ;;;; Status Tracking
 
@@ -608,7 +607,7 @@ Returns list of block IDs currently in buffer."
       current-buffer-blocks)))
 
 ;;;; Block Registration
-(defun ob-duckdb-blocks-register-execution (exec-id session body params is-async-p element)
+(defun ob-duckdb-blocks-register-execution (exec-id _session _body _params _is-async-p element)
 
   "Register execution of DuckDB block at point if tracking enabled.
 
@@ -1086,7 +1085,7 @@ See `ob-duckdb-blocks-update-execution-status' for how status is set."
           (princ "  None\n")
         (dolist (entry recent)
           (let* ((exec-id (aref entry 0))
-                 (block-id (aref entry 1))
+                 (_block-id (aref entry 1))
                  (timestamp (aref entry 2))
                  (exec-info (gethash exec-id ob-duckdb-blocks-executions))
                  ;; Get status from execution-status hash table, not from exec-info plist
