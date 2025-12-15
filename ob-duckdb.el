@@ -948,7 +948,7 @@ Also see `org-babel-duckdb-show-queue' for monitor startup and
   (setq org-babel-duckdb--queue-buffer nil))
 
 ;;;###autoload
-(defun org-babel-duckdb-show-queue (&optional session)
+(defun org-babel-duckdb-show-queue (&optional _session)
   "Display pending async executions for SESSION.
 
 When SESSION is nil, shows queues for all sessions.
@@ -1884,7 +1884,7 @@ See Info node `(org) Results of Evaluation' for result types."
     (if (and (> (length lines) 1)
              (string-match "^[-+|]" (nth 1 lines)))
         (let* ((header (car lines))
-               (separator (nth 1 lines))
+               (_separator (nth 1 lines))
                (data (cddr lines)))
           (cons (split-string header "|" t)
                 (mapcar (lambda (row) (split-string row "|" t)) data)))
@@ -1909,7 +1909,7 @@ is specified in source block header."
 
 ;;;; Progress Monitoring Functions
 
-(defun org-babel-duckdb-create-progress-monitor (exec-id session-buffer)
+(defun org-babel-duckdb-create-progress-monitor (exec-id _session-buffer)
   "Create status monitoring for async execution EXEC-ID.
 
 Display method controlled by `org-babel-duckdb-progress-display':
