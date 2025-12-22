@@ -2,10 +2,11 @@
 #+PROPERTY: LOGGING nil
 #+OPTIONS: ^:nil
 #+HTML: <img src="images/babel-duck-smaller.png" align="right" width="35%">
+#+HTML: <a href="https://melpa.org/#/ob-duckdb"><img alt="MELPA" src="https://melpa.org/packages/ob-duckdb-badge.svg"/></a>
 
 #+begin_quote
 [!IMPORTANT]
-Version 2.0.0 Released!
+NOW ON MELPA!
 #+end_quote
 
 This package provides Org Babel integration for [[https://duckdb.org/][DuckDB]], an in-process analytical
@@ -282,13 +283,35 @@ If =duckdb= is not in your PATH, customize =org-babel-duckdb-command=:
 (setq org-babel-duckdb-command "/path/to/duckdb")
 #+end_src
 
-** Manual Installation
-Clone the repository and add to your load path:
+** MELPA
+First, ensure MELPA is in your ~package-archives~:
 
-#+begin_src elisp
-(add-to-list 'load-path "/path/to/ob-duckdb")
+#+begin_src emacs-lisp
+(require 'package)
+(add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
+(package-initialize)
+#+end_src
+
+Then install ~ob-duckdb~:
+
+#+begin_src emacs-lisp
+(package-install 'ob-duckdb)
 (require 'ob-duckdb)
-(append org-babel-load-languages '((duckdb . t)))
+(org-babel-do-load-languages
+ 'org-babel-load-languages
+ (append org-babel-load-languages '((duckdb . t))))
+#+end_src
+
+Or with ~elpaca/use-package~:
+
+#+begin_src emacs-lisp
+(use-package ob-duckdb
+  :ensure t
+  :after org
+  :config
+  (org-babel-do-load-languages
+   'org-babel-load-languages
+   (append org-babel-load-languages '((duckdb . t)))))
 #+end_src
 
 ** With straight
@@ -305,10 +328,7 @@ Clone the repository and add to your load path:
 ** Doom Emacs
 #+begin_src elisp
 ;; packages.el
-(package! ob-duckdb
-  :recipe (:host github
-           :repo "gggion/ob-duckdb"
-           :files ("*.el")))
+(package! ob-duckdb)
 
 ;; config.el
 (use-package! ob-duckdb)
