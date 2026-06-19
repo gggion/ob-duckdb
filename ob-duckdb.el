@@ -555,13 +555,16 @@ Also see `org-babel-duckdb--resolve-motherduck-token' for token resolution."
 (defun org-babel-duckdb--build-connection-string (params)
   "Build DuckDB connection string from PARAMS.
 
-Returns connection string for MotherDuck or local database.
+Returns connection string for local database, or empty string for
+MotherDuck and in-memory databases.
 
-MotherDuck format: \"md:DATABASE?motherduck_token=TOKEN\"
-Local format: \"/path/to/database.duckdb\" or \"\" for in-memory
+MotherDuck connections start with an in-memory CLI process; the
+attach is performed via SQL prelude built by
+`org-babel-duckdb--build-motherduck-prelude'. This avoids relying
+on the motherduck extension being auto-loaded by the CLI when it
+parses the database argument.
 
-Resolves token via `org-babel-duckdb--resolve-motherduck-token'
-when :md present.
+Local format: \"/path/to/database.duckdb\" or \"\" for in-memory.
 
 Called by `org-babel-duckdb-initiate-session' and
 `org-babel-duckdb-execute-sync'.
@@ -571,16 +574,31 @@ Also see `org-babel-duckdb--validate-motherduck-params' for validation."
         (local-db (cdr (assq :db params))))
 
     (cond
-     ;; MotherDuck connection
-     (md-db
-      (let ((token (org-babel-duckdb--resolve-motherduck-token params)))
-        (format "md:%s?motherduck_token=%s" md-db token)))
+     ;; MotherDuck: start in-memory; attach via SQL prelude
+     (md-db "")
 
      ;; Local database file
      (local-db local-db)
 
      ;; In-memory database
      (t ""))))
+
+(defun org-babel-duckdb--build-motherduck-prelude (params)
+  "Build SQL prelude that attaches MotherDuck database from PARAMS.
+
+Returns SQL string or nil when :md is not set.
+
+The prelude installs and loads the motherduck extension, sets the
+auth token, and attaches the database. Uses ATTACH IF NOT EXISTS
+so the prelude is safe to run repeatedly in a session.
+
+Resolves token via `org-babel-duckdb--resolve-motherduck-token'."
+  (let ((md-db (cdr (assq :md params))))
+    (when md-db
+      (let ((token (org-babel-duckdb--resolve-motherduck-token params)))
+        (format
+         "INSTALL motherduck;\nLOAD motherduck;\nSET motherduck_token='%s';\nATTACH IF NOT EXISTS 'md:%s';\n"
+         token md-db)))))
 
 ;;;; Queue Management Functions
 (defun org-babel-duckdb--collect-queue-entries ()
@@ -2370,10 +2388,13 @@ When disabled, only async executions tracked minimally via
 
     (let* ((expanded-body (org-babel-expand-body:duckdb body params))
            (dot-commands (org-babel-duckdb-process-params params))
+           (md-prelude (org-babel-duckdb--build-motherduck-prelude params))
            (combined-body (if dot-commands
                               (concat dot-commands "\n" expanded-body)
                             expanded-body))
-           (final-body combined-body))
+           (final-body (if md-prelude
+                           (concat md-prelude combined-body)
+                         combined-body)))
 
       ;; Fire execution started hook
       (run-hook-with-args 'org-babel-duckdb-execution-started-functions
